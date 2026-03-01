@@ -1,0 +1,180 @@
+/* General */
+body {
+    font-family: "Roboto", sans-serif;
+    background-color: #f5f5f5;
+}
+
+/* Top bar */
+.dashboard-title {
+    color: #1a1a2e;
+    font-size: 1.8rem;
+    font-weight: 700;
+}
+
+.btn-primary {
+    background-color: #4a90e2;
+    border: none;
+    transition: background-color 0.2s ease;
+}
+
+.btn-primary:hover {
+    background-color: #357abd;
+}
+
+/* Tickers */
+.ticker-panel {
+    max-height: 80vh;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+.index-title {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.ticker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 10px;
+}
+
+.ticker-box {
+    border-radius: 5px;
+    text-align: center;
+    background-color: #fff;
+    padding: 5px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ticker-box.up {
+    background-color: #28a745; /* vibrant green */
+    color: #fff;
+    border: 1px solid #1c7c31;
+}
+
+.ticker-box.down {
+    background-color: #dc3545; /* vibrant red */
+    color: #fff;
+    border: 1px solid #a71d2a;
+}
+
+.ticker-box.up:hover {
+    background-color: #34c759;
+}
+
+.ticker-box.down:hover {
+    background-color: #e55361;
+}
+
+.ticker-box:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.ticker-symbol {
+    font-weight: bold;
+}
+
+.ticker-price, .ticker-pct {
+    font-size: 0.9em;
+}
+
+/* Portfolio headline metric */
+.portfolio-metric {
+    font-size: 1rem;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.portfolio-pct {
+    font-weight: 700;
+}
+
+.portfolio-pct.pos {
+    color: #28a745; /* green */
+}
+
+.portfolio-pct.neg {
+    color: #dc3545; /* red */
+}
+
+.last-updated {
+    color: #6c757d;
+    font-size: 0.85rem;
+}
+
+/* blinking text */
+.blink {
+  color: red; /* optional to stand out */
+  font-weight: bold;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink-animation {
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes blink {
+  0%, 50%, 100% { opacity: 1; }
+  25%, 75% { opacity: 0; }
+}
+
+/* ===================== Modal Styles ===================== */
+.modal-content {
+    border-radius: 10px;
+    padding: 15px;
+    background-color: #fff;
+}
+
+.modal-header {
+    border-bottom: 1px solid #dee2e6;
+}
+
+.modal-title {
+    font-weight: 600;
+    font-size: 1.2rem;
+}
+
+.modal-body form input,
+.modal-body form select {
+    margin-bottom: 10px;
+}
+
+.modal-body form label {
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+/* Admin modal large form adjustments */
+.modal-lg .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+    .dashboard-title {
+        font-size: 1.5rem;
+    }
+    .modal-lg {
+        max-width: 95%;
+    }
+}
+
+.portfolio-targets .badge {
+    font-size: 0.9rem;
+    padding: 0.55em 0.8em;
+}
+
+.admin-overlay {
+    max-width: 800px;
+    margin: 20px auto;
+    background: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}

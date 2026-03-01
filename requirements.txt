@@ -1,0 +1,11 @@
+Flask
+flask_sqlalchemy
+psycopg2-binary
+pandas
+plotly
+yfinance
+werkzeug
+gunicorn
+sendgrid
+python-dotenv
+openpyxl

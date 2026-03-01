@@ -1,0 +1,83 @@
+<div class="modal-header">
+    <h5 class="modal-title">Admin Panel</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+
+    <!-- 1️⃣ Upload Portfolio -->
+    <div class="card mb-3 p-3">
+        <h6>Upload Portfolio (.xls / .xlsx)</h6>
+        <form method="POST" action="/admin/upload" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".xls,.xlsx" required class="form-control mb-2">
+            <button class="btn btn-primary btn-sm">Upload</button>
+        </form>
+    </div>
+
+    <!-- 2️⃣ Set Default TP/SL -->
+    <div class="card mb-3 p-3">
+        <h6>Set Default Targets</h6>
+        <form method="POST" action="/admin/set_targets">
+            <div class="row g-2">
+                <div class="col">
+                    <input type="number" step="0.01" name="tp1" placeholder="TP1" class="form-control" required>
+                </div>
+                <div class="col">
+                    <input type="number" step="0.01" name="tp2" placeholder="TP2" class="form-control" required>
+                </div>
+                <div class="col">
+                    <input type="number" step="0.01" name="tp3" placeholder="TP3" class="form-control" required>
+                </div>
+                <div class="col">
+                    <input type="number" step="0.01" name="stop_loss" placeholder="Stop Loss" class="form-control" required>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-success btn-sm">Save</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- 3️⃣ Alert Emails -->
+    <div class="card mb-3 p-3">
+        <h6>Alert Emails (up to 5)</h6>
+        <form id="emailForm" method="POST" action="/admin/add_emails">
+            {% set email_list = emails + [None]*(5 - emails|length) %}
+            {% for i in range(5) %}
+            <div class="input-group">
+                <input type="email"
+                    class="form-control"
+                    id="email_{{ i }}"
+                    name="email_{{ i }}"
+                    value="{{ email_list[i].email if email_list[i] else '' }}"
+                    {% if email_list[i] %}readonly{% endif %}>
+
+                {% if email_list[i] %}
+                <button
+                    class="btn btn-outline-danger btn-sm delete-email-btn"
+                    type="button"
+                    data-id="{{ email_list[i].id }}">
+                    ✕
+                </button>
+                {% endif %}
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary mt-2">Save Emails</button>
+        </form>
+    </div>
+
+    <div id="flashContainer" class="mt-2">
+        <!-- Flash messages from flashContainer() in dashboard.html -->
+        
+    </div>    
+
+    <!-- TEST EMAIL-->
+    <form method="POST" action="/admin/test-email" style="margin-top: 15px;">
+        <button type="submit" class="btn btn-outline-primary">
+            🧪 Send Test Email
+        </button>
+    </form>
+
+</div>
+<div class="modal-footer">
+    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+</div>
