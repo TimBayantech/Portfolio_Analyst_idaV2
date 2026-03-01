@@ -1,23 +1,35 @@
 <div class="ticker-panel">
-    
+
     <!-- DOW -->
     <div class="index-group mb-3">
         <h6 class="index-title">DOW</h6>
         <div class="ticker-grid">
             {% for t in tickers if t.index == "DOW" %}
-            <div class="ticker-box 
-                {% if t.pct <= -10 %} blink
-                {% elif t.pct > 0 %} up
-                {% elif t.pct < 0 %} down
+            <div class="ticker-box
+                {% if t.pct is not none and t.pct <= -10 %}blink
+                {% elif t.pct is not none and t.pct > 0 %}up
+                {% elif t.pct is not none and t.pct < 0 %}down
                 {% endif %}">
                 <div class="ticker-symbol">{{ t.ticker }}</div>
-                <div class="ticker-price">${{ t.price or '–' }}</div>
-                <!---<div class="ticker-pct">{{ "+" if t.pct>0 else ""}}{{ t.pct or '' }}%</div>-->
-                <span class="ticker-pct 
+                <div class="ticker-price">
+                    {% if t.price is not none %}
+                        ${{ "%.2f"|format(t.price) }}
+                    {% else %}
+                        –
+                    {% endif %}
+                </div>
+
+                <span class="ticker-pct
                     {% if t.pct is not none and t.pct <= -10 %}blink
                     {% elif t.pct is not none and t.pct < 0 %}neg
-                    {% else %}pos{% endif %}">
-                    {{ "+" if t.pct and t.pct > 0 else "" }}{{ t.pct or '–' }}%
+                    {% elif t.pct is not none and t.pct > 0 %}pos
+                    {% endif %}">
+
+                    {% if t.pct is none %}
+                        <span class="badge bg-warning text-dark">No data</span>
+                    {% else %}
+                        {{ "+" if t.pct > 0 else "" }}{{ "%.2f"|format(t.pct) }}%
+                    {% endif %}
                 </span>
             </div>
             {% endfor %}
@@ -29,19 +41,31 @@
         <h6 class="index-title">NASDAQ</h6>
         <div class="ticker-grid">
             {% for t in tickers if t.index == "NASDAQ" %}
-            <div class="ticker-box 
-                {% if t.pct <= -10 %} blink
-                {% elif t.pct > 0 %} up
-                {% elif t.pct < 0 %} down
+            <div class="ticker-box
+                {% if t.pct is not none and t.pct <= -10 %}blink
+                {% elif t.pct is not none and t.pct > 0 %}up
+                {% elif t.pct is not none and t.pct < 0 %}down
                 {% endif %}">
                 <div class="ticker-symbol">{{ t.ticker }}</div>
-                <div class="ticker-price">${{ t.price or '–' }}</div>
-                <!--div class="ticker-pct">{{ "+" if t.pct>0 else ""}}{{ t.pct or '' }}%</div>-->
-                <span class="ticker-pct 
+                <div class="ticker-price">
+                    {% if t.price is not none %}
+                        ${{ "%.2f"|format(t.price) }}
+                    {% else %}
+                        –
+                    {% endif %}
+                </div>
+
+                <span class="ticker-pct
                     {% if t.pct is not none and t.pct <= -10 %}blink
                     {% elif t.pct is not none and t.pct < 0 %}neg
-                    {% else %}pos{% endif %}">
-                    {{ "+" if t.pct and t.pct > 0 else "" }}{{ t.pct or '–' }}%
+                    {% elif t.pct is not none and t.pct > 0 %}pos
+                    {% endif %}">
+
+                    {% if t.pct is none %}
+                        <span class="badge bg-warning text-dark">No data</span>
+                    {% else %}
+                        {{ "+" if t.pct > 0 else "" }}{{ "%.2f"|format(t.pct) }}%
+                    {% endif %}
                 </span>
             </div>
             {% endfor %}
