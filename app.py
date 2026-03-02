@@ -29,6 +29,11 @@ if database_url.startswith("postgres://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,     # ✅ fixes SSL EOF errors
+    "pool_recycle": 300,       # recycle connections every 5 minutes
+}
+
 # ✅ Bind SQLAlchemy to this app
 db.init_app(app)
 
