@@ -703,34 +703,32 @@ def dashboard():
 
     # 3️⃣ Plotly chart
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=calendar_index,
-            y=portfolio_index.reindex(calendar_index).values,
-            mode="lines+markers",
-            name="Equal Weight Portfolio",
-        )
-    )
+
+    fig.add_trace(go.Scatter(
+        x=calendar_index,
+        y=portfolio_index.reindex(calendar_index).values,
+        mode="lines+markers",
+        connectgaps=False,
+        name="Equal Weight Portfolio",
+    ))
 
     if "DIA" in benchmarks.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=calendar_index,
-                y=benchmarks["DIA"].reindex(calendar_index).values,
-                mode="lines+markers",
-                name="DIA",
-            )
-        )
+        fig.add_trace(go.Scatter(
+            x=calendar_index,
+            y=benchmarks["DIA"].reindex(calendar_index).values,
+            mode="lines+markers",
+            connectgaps=False,
+            name="DIA",
+        ))
 
     if "QQQ" in benchmarks.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=calendar_index,
-                y=benchmarks["QQQ"].reindex(calendar_index).values,
-                mode="lines+markers",
-                name="QQQ",
-            )
-        )
+        fig.add_trace(go.Scatter(
+            x=calendar_index,
+            y=benchmarks["QQQ"].reindex(calendar_index).values,
+            mode="lines+markers",
+            connectgaps=False,
+            name="QQQ",
+        ))
 
     # Compute end of month for proper x-axis range
     end_of_month = (start_of_month + pd.offsets.MonthEnd(1)).normalize()
@@ -740,6 +738,11 @@ def dashboard():
         xaxis_title="Date",
         yaxis_title="Index (Start=1)",
         template="plotly_white",
+        yaxis=dict(
+            autorange=True,
+            rangemode="normal",  # prevents Plotly from forcing 0 into the range
+            zeroline=False,
+        ),
     )
 
     fig.update_xaxes(

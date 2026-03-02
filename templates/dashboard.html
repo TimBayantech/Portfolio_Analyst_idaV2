@@ -154,41 +154,22 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<!-- ===================== PLOTLY STABILISER ===================== -->
+<!-- ===================== PLOTLY RELAYOUT ENFORCER ===================== -->
 <script>
 (function () {
-
-  function stabilisePlotly() {
+  function forcePlotlyRelayout() {
     const graphs = document.querySelectorAll("#chartWrap .plotly-graph-div");
     graphs.forEach(gd => {
       try {
-
-        // Force resize after layout settles
+        // Ensure sizing is correct after Bootstrap/layout settles
         Plotly.Plots.resize(gd);
 
-        if (!gd.data) return;
-
-        let changed = false;
-
-        gd.data.forEach(trace => {
-          if (!trace.y || trace.y.length < 2) return;
-
-          const y0 = trace.y[0];
-          const y1 = trace.y[1];
-
-          const bad = (y0 === null || y0 === undefined || Number.isNaN(y0) || y0 === 0);
-          const goodNext = (y1 !== null && y1 !== undefined && !Number.isNaN(y1));
-
-          if (bad && goodNext) {
-            trace.y[0] = y1;
-            changed = true;
-          }
+        // Force Plotly to NOT include 0 in autorange (this is the key for the phantom 0→1 spike)
+        Plotly.relayout(gd, {
+          "yaxis.rangemode": "normal",
+          "yaxis.autorange": true,
+          "yaxis.zeroline": false
         });
-
-        if (changed) {
-          Plotly.redraw(gd);
-        }
-
       } catch (e) {
         // silent in prod
       }
@@ -196,11 +177,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.addEventListener("load", () => {
-    setTimeout(stabilisePlotly, 200);
-    setTimeout(stabilisePlotly, 800);
-    setTimeout(stabilisePlotly, 1500);
+    setTimeout(forcePlotlyRelayout, 300);
+    setTimeout(forcePlotlyRelayout, 900);
+    setTimeout(forcePlotlyRelayout, 1600);
   });
 
+  window.addEventListener("resize", () => {
+    setTimeout(forcePlotlyRelayout, 150);
+  });
 })();
 </script>
 
