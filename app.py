@@ -599,19 +599,20 @@ def dashboard():
     # Build equal-weight index over *calendar days* (weekends included)
     prices = pd.DataFrame(price_cols).reindex(all_days)
 
-    # Any remaining gaps are forward-filled by build_month_close_series; this is just safety
-    prices = prices.ffill()
+    # Ensure we NEVER introduce zeros for missing data; fill both directions so month-start weekends are stable
+    prices = prices.ffill().bfill()
 
-    returns = prices.pct_change().fillna(0)
-    portfolio_index = (1 + returns.mean(axis=1)).cumprod()
+    # Normalize each ticker to Start=1 and then equal-weight average (more robust than pct_change on sparse series)
+    def _safe_norm(col: pd.Series) -> pd.Series:
+        s = col.astype(float).ffill().bfill()
+        base = float(s.iloc[0]) if len(s) else 1.0
+        return (s / base) if base != 0.0 else (s * 0 + 1.0)
 
-    fv = portfolio_index.first_valid_index()
-    if fv is None:
-        portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
-        portfolio_pct = 0.00
-    else:
-        portfolio_index = portfolio_index / float(portfolio_index.loc[fv])
-        portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1) * 100, 2)
+    norm_prices = prices.apply(_safe_norm, axis=0)
+    portfolio_index = norm_prices.mean(axis=1)
+
+    # Portfolio MTD %
+    portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1.0) * 100.0, 2)
 
 # TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
     if portfolio_pct is not None and settings and should_run_alert_check(settings, cooldown_seconds=60):
@@ -629,15 +630,14 @@ def dashboard():
 
         benchmarks = pd.DataFrame(index=all_days)
         if bench_cols:
-            close = pd.DataFrame(bench_cols).reindex(all_days).ffill()
+            close = pd.DataFrame(bench_cols).reindex(all_days)
 
-            # Normalize safely even if the first row is NaN (common on non-trading month start).
+            # Ensure full series (month-start weekends): fill both ways, then normalize to Start=1
+            close = close.ffill().bfill()
+
             for c in list(close.columns):
-                fv = close[c].first_valid_index()
-                if fv is None:
-                    close[c] = 1.0
-                else:
-                    close[c] = close[c] / float(close.loc[fv, c])
+                base = float(close[c].iloc[0])
+                close[c] = (close[c] / base) if base != 0.0 else (close[c] * 0 + 1.0)
 
             benchmarks = close
     except Exception as e:
