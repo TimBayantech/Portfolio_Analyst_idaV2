@@ -1,11 +1,10 @@
 Flask
-flask_sqlalchemy
+Flask-SQLAlchemy
 psycopg2-binary
-pandas
-plotly
-yfinance
-werkzeug
 gunicorn
+pandas
+yfinance
+plotly
 sendgrid
 python-dotenv
 openpyxl

@@ -1,18 +1,14 @@
 from flask import Flask, render_template, request, session, redirect, flash, abort, jsonify
 import pandas as pd
+import yfinance as yf
 import plotly.graph_objs as go
 import plotly.io as pio
 from datetime import datetime, timedelta
 from flask_sqlalchemy import SQLAlchemy
 import os
-import json
-import re
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import inspect, text
 import threading
-import time
-import random
 from models import db, User, PortfolioTicker, PortfolioSettings, AlertEmail
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -24,27 +20,13 @@ load_dotenv()  # reads .env into os.environ
 # Flask App Initialization
 # ===============================
 app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
 
-secret_key = os.environ.get("SECRET_KEY")
-if not secret_key:
-    raise RuntimeError("SECRET_KEY must be set.")
-app.config["SECRET_KEY"] = secret_key
-
-database_url = os.environ.get("DATABASE_URL")
-
-# In production: require DATABASE_URL
-if not database_url:
-    # allow local dev fallback only
-    if os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER") == "true":
-        raise RuntimeError("DATABASE_URL is required in production (Render).")
-    database_url = "sqlite:///portfolio.db"
-
-# Render/Heroku style fix
+database_url = os.environ.get("DATABASE_URL", "sqlite:///portfolio.db")
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # ✅ Bind SQLAlchemy to this app
@@ -54,350 +36,33 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-    # Ensure schema compatibility for the alert cooldown column (avoids duplicate alerts on Render)
-    insp = inspect(db.engine)
-    try:
-        cols = [c['name'] for c in insp.get_columns('portfolio_settings')]
-        if 'last_alert_check_at' not in cols:
-            dialect = db.engine.dialect.name
-            col_type = 'TIMESTAMP' if dialect != 'sqlite' else 'DATETIME'
-            db.session.execute(text(f'ALTER TABLE portfolio_settings ADD COLUMN last_alert_check_at {col_type}'))
-            db.session.commit()
-            print('✅ Added missing column: portfolio_settings.last_alert_check_at')
-    except Exception as e:
-        # If the table doesn't exist yet or ALTER fails, ignore; create_all will handle fresh DBs.
-        db.session.rollback()
-        print('⚠️ Schema check skipped/failed:', e)
+if os.environ.get("RENDER"):
+    app.config["ENV"] = "production"
 
-
-
-
-# ----------------------------
-# Alpha Vantage helpers (retries + light caching)
-# ----------------------------
-import urllib.request
-import urllib.parse
-import urllib.error
-
-ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY")
-if not ALPHA_VANTAGE_API_KEY:
-    raise RuntimeError("ALPHA_VANTAGE_API_KEY must be set (Alpha Vantage is required for market data).")
-
-
-# Debug logging for Alpha Vantage responses.
-# Set AV_DEBUG=1 in your environment to enable verbose logging.
-AV_DEBUG = os.environ.get("AV_DEBUG", "0") == "1"
-
-def _av_redact_url(url: str) -> str:
-    # avoid leaking API key into logs
-    return re.sub(r"(apikey=)[^&]+", r"\1***", url)
-
-def _av_dbg(msg: str):
-    if AV_DEBUG:
-        print(msg)
-
-
-_AV_CACHE = {
-    "quote": {},  # symbol -> (ts_epoch, payload)
-    "daily": {},  # symbol -> (ts_epoch, payload)
-}
-
-# Simple global rate limiter for Alpha Vantage to avoid burst throttling.
-# Default pacing: ~4 requests/sec (0.26s spacing). Override with AV_MIN_INTERVAL_S.
-_AV_RATE_LOCK = threading.Lock()
-_AV_LAST_CALL_TS = 0.0
-_AV_MIN_INTERVAL_S = float(os.environ.get("AV_MIN_INTERVAL_S", "0.26"))
-
-def _now_epoch() -> float:
-    return time.time()
-
-def av_get_json(params: dict, retries: int = 3, base_sleep: float = 1.0):
-    """Call Alpha Vantage and return parsed JSON (dict) or None on failure.
-
-    Debug:
-      - set AV_DEBUG=1 to print URL (redacted), status/bytes, top-level keys,
-        and any throttle/error messages (Note/Information/Error Message).
-    """
-    q = urllib.parse.urlencode(params)
-    url = f"https://www.alphavantage.co/query?{q}"
-
-    func = params.get("function")
-    sym = params.get("symbol")
-
-    last_err = None
-    for attempt in range(1, retries + 1):
-        try:
-            # Global pacing to avoid Alpha Vantage "Burst pattern detected".
-            global _AV_LAST_CALL_TS
-            with _AV_RATE_LOCK:
-                now_ts = time.time()
-                wait_s = _AV_MIN_INTERVAL_S - (now_ts - _AV_LAST_CALL_TS)
-                if wait_s > 0:
-                    time.sleep(wait_s + random.uniform(0, 0.05))
-                _AV_LAST_CALL_TS = time.time()
-
-            _av_dbg(f"🛰️ AV request: function={func} symbol={sym} attempt={attempt}/{retries} url={_av_redact_url(url)}")
-
-            try:
-                with urllib.request.urlopen(url, timeout=20) as resp:
-                    status = getattr(resp, "status", None)
-                    raw_bytes = resp.read()
-                raw = raw_bytes.decode("utf-8", errors="replace")
-                _av_dbg(f"✅ AV HTTP {status} bytes={len(raw_bytes)} head={raw[:180].replace(chr(10),' ')[:180]}")
-            except urllib.error.HTTPError as he:
-                body = he.read().decode("utf-8", errors="replace")
-                _av_dbg(f"❌ AV HTTPError {he.code} function={func} symbol={sym} body_head={body[:220].replace(chr(10),' ')[:220]}")
-                raise
-            except urllib.error.URLError as ue:
-                _av_dbg(f"❌ AV URLError function={func} symbol={sym} err={ue}")
-                raise
-
-            data = json.loads(raw)
-            if isinstance(data, dict):
-                keys = list(data.keys())
-                _av_dbg(f"🔎 AV keys: {keys}")
-
-                # Alpha Vantage rate limit / throttling / errors
-                if "Note" in data:
-                    note = str(data.get("Note", ""))[:240]
-                    _av_dbg(f"⚠️ AV THROTTLED Note: {note}")
-                    raise RuntimeError(data.get("Note"))
-                if "Information" in data:
-                    info = str(data.get("Information", ""))[:240]
-                    _av_dbg(f"⚠️ AV Information: {info}")
-                    raise RuntimeError(data.get("Information"))
-                if "Error Message" in data:
-                    em = str(data.get("Error Message", ""))[:240]
-                    _av_dbg(f"❌ AV Error Message: {em}")
-                    raise RuntimeError(data.get("Error Message"))
-
-            return data
-
-        except Exception as e:
-            last_err = e
-            sleep_s = base_sleep * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
-            print(f"⚠️ Alpha Vantage call failed (attempt {attempt}/{retries}) function={func} symbol={sym}: {e}")
-            if attempt < retries:
-                time.sleep(sleep_s)
-    print(f"❌ Alpha Vantage call failed after {retries} attempts function={func} symbol={sym}: {last_err}")
-    return None
-
-
-def av_global_quote(symbol: str, cache_seconds: int = 60):
-    """Return (price, prev_close) floats or (None, None) if unavailable."""
-    symbol = symbol.strip().upper()
-    _av_dbg(f"📌 GLOBAL_QUOTE {symbol} cache_seconds={cache_seconds}")
-    cached = _AV_CACHE["quote"].get(symbol)
-    now = _now_epoch()
-    if cached and (now - cached[0]) < cache_seconds:
-        _av_dbg(f"🟢 quote cache hit {symbol}")
-        payload = cached[1]
-    else:
-        _av_dbg(f"🟠 quote cache miss {symbol} -> calling AV")
-        payload = av_get_json({
-            "function": "GLOBAL_QUOTE",
-            "symbol": symbol,
-            "apikey": ALPHA_VANTAGE_API_KEY
-        })
-        # Only cache successful payloads; do NOT poison the cache with None/invalid responses
-        if payload and isinstance(payload, dict) and payload.get("Global Quote"):
-            _AV_CACHE["quote"][symbol] = (now, payload)
-        else:
-            payload = None
-
-    if not payload or "Global Quote" not in payload:
-        return None, None
-
-    q = payload.get("Global Quote", {}) or {}
-    try:
-        price = float(q.get("05. price"))
-        prev = float(q.get("08. previous close"))
-        return price, prev
-    except Exception:
-        return None, None
-
-def av_daily_adjusted(symbol: str, cache_seconds: int = 900):
-    """Return dict date->adjusted_close (strings) or None."""
-    symbol = symbol.strip().upper()
-    cached = _AV_CACHE["daily"].get(symbol)
-    now = _now_epoch()
-    if cached and (now - cached[0]) < cache_seconds:
-        _av_dbg(f"🟢 daily cache hit {symbol}")
-        payload = cached[1]
-    else:
-        _av_dbg(f"🟠 daily cache miss {symbol} -> calling AV")
-        payload = av_get_json({
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": symbol,
-            "outputsize": "compact",
-            "apikey": ALPHA_VANTAGE_API_KEY
-        })
-        # Only cache successful payloads; do NOT poison the cache with None/invalid responses
-        if payload and isinstance(payload, dict) and payload.get("Time Series (Daily)"):
-            _AV_CACHE["daily"][symbol] = (now, payload)
-        else:
-            payload = None
-
-    if not payload:
-        return None
-
-    ts = payload.get("Time Series (Daily)")
-    if not isinstance(ts, dict):
-        return None
-    return ts
-
-
-def av_last_two_adjusted_closes(symbol: str):
-    """Return (last_close, prev_close) from the daily adjusted series."""
-    ts = av_daily_adjusted(symbol)
-    if not ts:
-        return None, None
-
-    dates = sorted(ts.keys(), reverse=True)
-    closes = []
-    for d in dates:
-        vals = ts.get(d) or {}
-        try:
-            closes.append(float(vals.get("5. adjusted close")))
-        except Exception:
-            continue
-        if len(closes) >= 2:
-            break
-
-    if len(closes) < 2:
-        return None, None
-    return closes[0], closes[1]
-
-def av_close_series(symbol: str, start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.Series:
-    """Return a pandas Series of adjusted close indexed by date for [start_date, end_date]."""
-    ts = av_daily_adjusted(symbol)
-    if not ts:
-        return pd.Series(dtype="float64")
-
-    # Alpha Vantage dates are 'YYYY-MM-DD' strings
-    rows = []
-    for d, vals in ts.items():
-        try:
-            dt = pd.to_datetime(d)
-        except Exception:
-            continue
-        if dt < start_date or dt > end_date:
-            continue
-        try:
-            adj = float(vals.get("5. adjusted close"))
-        except Exception:
-            continue
-        rows.append((dt.normalize(), adj))
-
-    if not rows:
-        return pd.Series(dtype="float64")
-
-    s = pd.Series(dict(rows))
-    s = s.sort_index()
-    return s
-
-
-
-def build_month_close_series(symbol: str, month_start: pd.Timestamp, today: pd.Timestamp, all_days: pd.DatetimeIndex) -> pd.Series:
-    """Build a month-to-date *calendar-day* close series.
-
-    - Uses AV daily adjusted series (cached) for trading days in [month_start, today]
-    - Reindexes to calendar days and forward-fills (so weekends show)
-    - If there are *no* trading days yet in the current month (e.g., month starts on weekend/holiday),
-      returns a flat series seeded with the last available close <= today.
-    """
-    ts = av_daily_adjusted(symbol)
-    if not ts:
-        return pd.Series(dtype="float64")
-
-    rows = []
-    for ds, vals in ts.items():
-        try:
-            d = pd.to_datetime(ds).normalize()
-            if d > today:
-                continue
-            # Prefer adjusted close; fall back to close if needed
-            close = float((vals or {}).get("5. adjusted close") or (vals or {}).get("4. close"))
-            rows.append((d, close))
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.Series(dtype="float64")
-
-    rows.sort(key=lambda x: x[0])
-    last_close = rows[-1][1]
-
-    in_month = [(d, c) for d, c in rows if month_start <= d <= today]
-    if not in_month:
-        # No trading days yet this month
-        return pd.Series([last_close] * len(all_days), index=all_days, dtype="float64")
-
-    s = pd.Series({d: c for d, c in in_month}).sort_index()
-    s = s.reindex(all_days)
-
-    # Fill initial NaNs (before first trading day) with last_close from previous month
-    first_valid = s.first_valid_index()
-    if first_valid is None:
-        return pd.Series([last_close] * len(all_days), index=all_days, dtype="float64")
-
-    if pd.isna(s.iloc[0]):
-        s.loc[:first_valid] = s.loc[:first_valid].fillna(last_close)
-
-    # Fill the rest forward (weekends / missing days)
-    s = s.ffill()
-
-    return s
-
-
+    
 # ----------------------------
 # Helper function to get live prices
 # ----------------------------
-
 def get_live_prices(tickers):
-    """Fetch latest price + **MTD % change** for each ticker.
-
-    Tile % should match the dashboard's Month-to-Date logic:
-      MTD% = (last trading close of current month / first trading close of current month - 1) * 100
-
-    On the first day of the month when it's a non-trading day (weekend/holiday),
-    we show MTD% = 0.00 for all tickers (and still show the latest available price).
-    """
+    data = yf.download(
+        tickers,
+        period="2d",  # later version to be tested with "5d"
+        interval="1d",
+        group_by="ticker",
+        auto_adjust=True,
+        progress=False
+    )
     live_data = {}
-
-    today = pd.Timestamp.today().normalize()
-    start_of_month = today.replace(day=1)
-
     for t in tickers:
         try:
-            # Prefer MTD series from daily adjusted (cached)
-            s = av_close_series(t, start_date=start_of_month, end_date=today)
-
-            if s is not None and not s.empty:
-                first = float(s.iloc[0])
-                last = float(s.iloc[-1])
-                price = last
-                pct = (last / first - 1) * 100 if first else 0.0
-            else:
-                # No month data yet (common on month-start weekend/holiday) or API issue.
-                # Still show the latest available close, but set MTD% to 0 on month-start non-trading days.
-                last_close, prev_close = av_last_two_adjusted_closes(t)
-                if last_close is None:
-                    last_close, prev_close = av_global_quote(t)
-
-                if last_close is None:
-                    raise ValueError("No data returned")
-
-                price = float(last_close)
-                pct = 0.0
-
-            live_data[t] = {"price": round(price, 2), "pct": None if pct is None else round(float(pct), 2)}
-        except Exception as e:
-            print(f"⚠️ Live price failed for {t}: {e}")
+            df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
+            last = df["Close"].iloc[-1]
+            prev = df["Close"].iloc[-2]
+            pct = (last / prev - 1) * 100
+            live_data[t] = {"price": round(last, 2), "pct": round(pct, 2)}
+        except Exception:
             live_data[t] = {"price": None, "pct": None}
-
     return live_data
-
 
 
 # ----------------------------
@@ -408,12 +73,10 @@ def get_live_prices(tickers):
 # Send Emails via SendGrid API
 # ----------------------------
 def send_portfolio_alert_thread(subject, body):
-    """Send alert to all configured emails using SendGrid API."""
     with app.app_context():
         emails = [e.email for e in AlertEmail.query.all()]
         if not emails:
-            print("No alert emails configured.")
-            return
+            return False
 
         try:
             sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
@@ -424,12 +87,11 @@ def send_portfolio_alert_thread(subject, body):
                 subject=subject,
                 plain_text_content=body,
             )
-            response = sg.send(message)
-            print("SendGrid status:", response.status_code)
-            print("Email sent to:", emails)
-            return response.status_code == 202
-        except Exception as e:
-            print("SendGrid email failed:", str(e))
+
+            sg.send(message)
+            return True
+
+        except Exception:
             return False
 
 
@@ -454,17 +116,10 @@ def check_and_send_portfolio_alerts(settings, portfolio_pct):
     if not settings:
         return
 
-    #debugging
-    print("------ ALERT DEBUG ------")
-    print("Portfolio:", portfolio_pct, type(portfolio_pct))
-    print("TP1:", settings.tp1, type(settings.tp1))
-    print("TP2:", settings.tp2)
-    print("TP3:", settings.tp3)
-    print("SL:", settings.stop_loss)
-    print("TP1 HIT:", settings.tp1_hit)
-    print("TP2 HIT:", settings.tp2_hit)
-    print("TP3 HIT:", settings.tp3_hit)
-    print("-------------------------")
+    # 🔒 CRITICAL FIX
+    if portfolio_pct is None:
+        return
+    
 
     # TP1
     if settings.tp1 and not settings.tp1_hit and portfolio_pct >= settings.tp1:
@@ -503,29 +158,6 @@ def check_and_send_portfolio_alerts(settings, portfolio_pct):
 
 
 # ----------------------------
-# Alert check cooldown guard (prevents duplicate alert checks across web workers)
-# ----------------------------
-def should_run_alert_check(settings, cooldown_seconds=60):
-    """Return True if we should run the TP/SL check now.
-
-    We store a timestamp on the PortfolioSettings row. The first worker to commit wins;
-    others will see the recent timestamp and skip within the cooldown window.
-    """
-    if not settings:
-        return False
-
-    now = datetime.utcnow()
-    last = getattr(settings, "last_alert_check_at", None)
-    if last and (now - last).total_seconds() < cooldown_seconds:
-        return False
-
-    # Commit BEFORE sending emails to create a lock visible to other workers
-    settings.last_alert_check_at = now
-    db.session.commit()
-    return True
-
-
-# ----------------------------
 # Main dashboard route
 # ----------------------------
 @app.route("/")
@@ -540,12 +172,12 @@ def dashboard():
 
     if not db_tickers:
         return render_template("dashboard.html", 
-                                message="No portfolio loaded", 
-                                portfolio_pct=None,
-                                last_updated=None,
-                                chart_html=None,
-                                tickers=[]
-                            )
+                               message="No portfolio loaded", 
+                               portfolio_pct=None,
+                               last_updated=None,
+                               chart_html=None,
+                               tickers=[]
+                               )
 
     tickers = [t.ticker for t in db_tickers]
     live_prices = get_live_prices(tickers)
@@ -563,206 +195,123 @@ def dashboard():
     last_updated = datetime.now().strftime("%H:%M")
 
     # ------------------------
-    # 📊 CHART SECTION
+    # MONTHLY DASHBOARD
     # ------------------------
-
-    # --- Month-to-date chart ---
     today = pd.Timestamp.today().normalize()
     start_of_month = today.replace(day=1)
-    all_days = pd.date_range(start=start_of_month, end=today, freq="D")
+    end_of_month = (start_of_month + pd.offsets.MonthEnd(1)).normalize()
 
-    # 1️⃣ Equal-weight portfolio (Alpha Vantage daily adjusted closes)
-    start_date = start_of_month
-    end_date = today
+    # Full month calendar
+    all_days = pd.date_range(start=start_of_month, end=end_of_month, freq="D")
 
-    price_cols = {}
-    for sym in tickers:
-        s = build_month_close_series(sym, month_start=start_of_month, today=today, all_days=all_days)
-        if s is not None and not s.empty:
-            price_cols[sym] = s
+    # 1️⃣ Download portfolio historical data
+    hist_data = yf.download(
+        tickers,
+        start=start_of_month,
+        end=end_of_month + pd.Timedelta(days=1),
+        interval="1d",
+        auto_adjust=True,
+        progress=False
+    )
 
-    _av_dbg(f"📈 CHART month={start_date.date()}..{end_date.date()} series_ok={len(price_cols)}/{len(tickers)} missing={[s for s in tickers if s not in price_cols]}")
-
-    # If we still have nothing, it's a genuine data/API issue (or AV key missing/blocked)
-    if not price_cols:
-        _av_dbg("🚫 CHART: no daily series available; rendering unavailable state")
-        return render_template(
-            "dashboard.html",
-            message="Market data temporarily unavailable (Alpha Vantage). Please refresh later.",
-            portfolio_settings=settings,
-            portfolio_pct=None,
-            last_updated=last_updated,
-            chart_html=None,
-            tickers=tickers_data,
-        )
-
-    # Build equal-weight index over *calendar days* (weekends included)
-    prices = pd.DataFrame(price_cols).reindex(all_days)
-
-    # Any remaining gaps are forward-filled by build_month_close_series; this is just safety
-
-    # Any remaining gaps are forward/back filled; NEVER fill missing prices with 0
-    prices = prices.ffill().bfill()
-
-    # Build Equal Weight Portfolio index robustly:
-    # 1) normalize each ticker series to start=1 at the first non-null value
-    # 2) average across tickers (equal weight)
-    norm = pd.DataFrame(index=prices.index)
-    for col in prices.columns:
-        s = prices[col].astype(float).ffill().bfill()
-        s_nonnull = s.dropna()
-        if s_nonnull.empty:
-            continue
-        base = float(s_nonnull.iloc[0])
-        if base == 0:
-            # Should not happen, but guard anyway
-            norm[col] = 1.0
-        else:
-            norm[col] = s / base
-
-    if norm.empty:
-        portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
-        portfolio_pct = 0.00
+    if hist_data.empty:
+        portfolio_index = pd.Series(index=all_days, dtype=float)
+        portfolio_pct = None
     else:
-        portfolio_index = norm.mean(axis=1).ffill().bfill()
-        # Force first point to 1.0 to avoid any month-start NaN/0 quirks
-        if len(portfolio_index) > 0:
-            portfolio_index.iloc[0] = 1.0
-        portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1.0) * 100.0, 2)
+        prices = hist_data["Close"] if isinstance(hist_data.columns, pd.MultiIndex) else hist_data["Close"].to_frame()
+        prices.index = pd.to_datetime(prices.index)
+        prices = prices[prices.index >= start_of_month]
 
-    # TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
-    if portfolio_pct is not None and settings and should_run_alert_check(settings, cooldown_seconds=60):
-        check_and_send_portfolio_alerts(settings, portfolio_pct)
-
-    # 2️⃣ Benchmarks (ETF proxies via Alpha Vantage): DIA (Dow proxy) & QQQ (Nasdaq-100 proxy)
-    try:
-        bench_cols = {}
-        dia = build_month_close_series("DIA", month_start=start_of_month, today=today, all_days=all_days)
-        qqq = build_month_close_series("QQQ", month_start=start_of_month, today=today, all_days=all_days)
-        if not dia.empty:
-            bench_cols["DIA"] = dia
-        if not qqq.empty:
-            bench_cols["QQQ"] = qqq
-
-        benchmarks = pd.DataFrame(index=all_days)
-        if bench_cols:
-            close = pd.DataFrame(bench_cols).reindex(all_days).ffill().bfill()
-
-            # Normalize safely even if the first row is NaN (common on non-trading month start).
-            for c in list(close.columns):
-                s = close[c].astype(float).ffill().bfill()
-                s_nonnull = s.dropna()
-                if s_nonnull.empty:
-                    close[c] = 1.0
-                    continue
-                base = float(s_nonnull.iloc[0])
-                if base == 0:
-                    close[c] = 1.0
-                else:
-                    close[c] = s / base
-                # Force the first point to be exactly 1.0 (prevents 0→1 spikes)
-                if len(close[c]) > 0:
-                    close.loc[close.index[0], c] = 1.0
-
-            benchmarks = close
-    except Exception as e:
-        print(f"⚠️ Benchmark download failed: {e}. Using empty DataFrame instead.")
-        benchmarks = pd.DataFrame(index=all_days)
-
-    # --- Render-safe alignment guard (prevents 0→1 spike due to index misalignment / NaN→0 quirks) ---
-    calendar_index = all_days
-
-    def _align_series(s: pd.Series) -> pd.Series:
-        s = pd.Series(s, index=s.index).astype(float)
-        s = s.reindex(calendar_index).ffill().bfill()
-        if len(s) == 0:
-            return s
-        # If the first point is odd (e.g., 0.0), force it to match the second point
-        if len(s) >= 2:
-            s.iloc[0] = s.iloc[1]
+        if prices.empty:
+            portfolio_index = pd.Series(index=all_days, dtype=float)
+            portfolio_pct = None
         else:
-            s.iloc[0] = 1.0
-        return s
+            # --- Normalize by first trading day of the month ---
+            first_trading_day = prices.index.min()
+            prices = prices / prices.loc[first_trading_day]
 
-    portfolio_index = _align_series(portfolio_index)
+            # --- Reindex to full month calendar, forward-fill ---
+            prices = prices.reindex(all_days).ffill()
 
-    if isinstance(benchmarks, pd.DataFrame) and not benchmarks.empty:
-        # Align each benchmark column to the same calendar index
-        for c in list(benchmarks.columns):
-            benchmarks[c] = _align_series(benchmarks[c])
+            # --- Equal-weight portfolio ---
+            portfolio_index = prices.mean(axis=1)
 
-    if os.getenv("CHART_DEBUG") == "1":
-        try:
-            p0 = float(portfolio_index.iloc[0]) if len(portfolio_index) else None
-            p1 = float(portfolio_index.iloc[1]) if len(portfolio_index) > 1 else None
-            d0 = float(benchmarks["DIA"].iloc[0]) if isinstance(benchmarks, pd.DataFrame) and "DIA" in benchmarks.columns and len(benchmarks["DIA"]) else None
-            q0 = float(benchmarks["QQQ"].iloc[0]) if isinstance(benchmarks, pd.DataFrame) and "QQQ" in benchmarks.columns and len(benchmarks["QQQ"]) else None
-            print(f"[CHART_DEBUG] first2 PORT={p0},{p1} DIA={d0} QQQ={q0}")
-        except Exception as _e:
-            print(f"[CHART_DEBUG] failed: {_e}")
+            # Portfolio % change relative to first trading day
+            portfolio_pct = round((portfolio_index.loc[today] - 1) * 100, 2) if today in portfolio_index.index else None
+
+    # Check alerts
+    check_and_send_portfolio_alerts(settings, portfolio_pct)
+
+    # 2️⃣ Download benchmark indices
+    raw_benchmarks = yf.download(
+        ["^DJI", "^IXIC", "^FTSE"],
+        start=start_of_month,
+        end=end_of_month + pd.Timedelta(days=1),
+        interval="1d",
+        auto_adjust=True,
+        progress=False
+    )
+
+    if raw_benchmarks.empty:
+        benchmarks = pd.DataFrame(index=all_days)
+    else:
+        benchmarks = raw_benchmarks["Close"]
+        benchmarks.index = pd.to_datetime(benchmarks.index)
+        benchmarks = benchmarks[benchmarks.index >= start_of_month]
+
+        if not benchmarks.empty:
+            first_trading_day_benchmark = benchmarks.index.min()
+            benchmarks = benchmarks / benchmarks.loc[first_trading_day_benchmark]
+            benchmarks = benchmarks.reindex(all_days).ffill()
+
+    # Optional: blank future days
+    portfolio_index.loc[portfolio_index.index > today] = None
+    if not benchmarks.empty:
+        benchmarks.loc[benchmarks.index > today] = None
+
+    # Check if there is any actual data to display
+    message = None
+    if portfolio_index.dropna().empty:
+        message = "No trading data available yet for this month."
+    
 
     # 3️⃣ Plotly chart
     fig = go.Figure()
+    fig.add_trace(go.Scatter(x=portfolio_index.index, y=portfolio_index.values,
+                             mode="lines+markers", name="Portfolio"))
 
-    fig.add_trace(go.Scatter(
-        x=calendar_index,
-        y=portfolio_index.reindex(calendar_index).values,
-        mode="lines+markers",
-        connectgaps=False,
-        name="Equal Weight Portfolio",
-    ))
-
-    if "DIA" in benchmarks.columns:
-        fig.add_trace(go.Scatter(
-            x=calendar_index,
-            y=benchmarks["DIA"].reindex(calendar_index).values,
-            mode="lines+markers",
-            connectgaps=False,
-            name="DIA",
-        ))
-
-    if "QQQ" in benchmarks.columns:
-        fig.add_trace(go.Scatter(
-            x=calendar_index,
-            y=benchmarks["QQQ"].reindex(calendar_index).values,
-            mode="lines+markers",
-            connectgaps=False,
-            name="QQQ",
-        ))
-
-    # Compute end of month for proper x-axis range
-    end_of_month = (start_of_month + pd.offsets.MonthEnd(1)).normalize()
+    if "^DJI" in benchmarks.columns:
+        fig.add_trace(go.Scatter(x=benchmarks.index, y=benchmarks["^DJI"],
+                                 mode="lines+markers", name="DOW"))
+    if "^IXIC" in benchmarks.columns:
+        fig.add_trace(go.Scatter(x=benchmarks.index, y=benchmarks["^IXIC"],
+                                 mode="lines+markers", name="NASDAQ"))
+    if "^FTSE" in benchmarks.columns:
+        fig.add_trace(go.Scatter(x=benchmarks.index, y=benchmarks["^FTSE"],
+                                mode="lines+markers", name="FTSE 100"))
 
     fig.update_layout(
-        title="Month-to-Date: Equal Weight Portfolio vs DIA & QQQ",
+        title="Monthly Portfolio vs DOW & NASDAQ",
         xaxis_title="Date",
         yaxis_title="Index (Start=1)",
         template="plotly_white",
-        yaxis=dict(
-            autorange=True,
-            rangemode="normal",  # prevents Plotly from forcing 0 into the range
-            zeroline=False,
-        ),
+        xaxis=dict(
+            tickformat="%Y-%m-%d",
+            tickmode="auto",
+            nticks=10
+        )
     )
 
-    fig.update_xaxes(
-        range=[start_of_month, end_of_month],  # show full month range
-        dtick="D1",  # daily ticks
-        tickformat="%d %b"  # 01 Mar
-    )
+    chart_html = pio.to_html(fig, full_html=False)
 
-    chart_html = pio.to_html(fig, full_html=False, include_plotlyjs=False)
-
-    print(f"[DEBUG] chart_html_bytes={len(chart_html) if chart_html else 0}")
-
-    return render_template(
-        "dashboard.html",
-        portfolio_settings=settings,
-        chart_html=chart_html,
-        tickers=tickers_data,
-        portfolio_pct=portfolio_pct,
-        last_updated=last_updated,
-    )
+    return render_template("dashboard.html", 
+                            portfolio_settings=settings,
+                            chart_html=chart_html, 
+                            tickers=tickers_data,
+                            portfolio_pct=portfolio_pct,
+                            last_updated=last_updated,
+                            message=message
+                           )
 
 @app.route("/tickers-refresh")
 def tickers_refresh():
@@ -824,7 +373,6 @@ def admin():
                            )
     
     
-
 @app.route("/admin/upload", methods=["POST"])
 def upload_portfolio():
     if not session.get("admin_logged_in"):
@@ -833,13 +381,6 @@ def upload_portfolio():
 
     file = request.files.get("file")
     df = pd.read_excel(file)
-
-    df.columns = df.columns.str.strip().str.lower()
-
-    required = {"ticker", "index"}
-    if not required.issubset(set(df.columns)):
-        flash("Upload must contain columns: ticker and index", "danger")
-        return redirect("/")
 
     # Normalize column names
     df.columns = (
@@ -1040,4 +581,4 @@ def admin_test_email():
 
 
 if __name__ == "__main__":
-    app.run(debug=True,use_reloader=False)
+    app.run(debug=True)
