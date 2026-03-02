@@ -669,36 +669,39 @@ def dashboard():
         print(f"⚠️ Benchmark download failed: {e}. Using empty DataFrame instead.")
         benchmarks = pd.DataFrame(index=all_days)
 
-    
-    # --- Final alignment guard (prevents 0→1 spikes on Render due to index mismatch) ---
-    calendar_index = all_days  # explicit calendar-day index used for plotting
+    # --- Render-safe alignment guard (prevents 0→1 spike due to index misalignment / NaN→0 quirks) ---
+    calendar_index = all_days
 
-    def _align_index_series(s: pd.Series) -> pd.Series:
-        """Align a numeric index series to the calendar_index and guarantee Start=1."""
-        if s is None:
-            return pd.Series([1.0] * len(calendar_index), index=calendar_index, dtype="float64")
-        s2 = pd.Series(s.values, index=pd.to_datetime(s.index)).sort_index()
-        s2 = s2.reindex(calendar_index).astype("float64")
-        # never fill missing with 0; use ffill/bfill
-        s2 = s2.replace([float("inf"), float("-inf")], pd.NA).ffill().bfill()
-        if s2.isna().all():
-            s2 = pd.Series([1.0] * len(calendar_index), index=calendar_index, dtype="float64")
-        # Guarantee first point is exactly 1.0
-        if len(s2) > 0:
-            s2.iloc[0] = 1.0
-        # Safety: if any zeros sneak in at the head, lift them to 1.0
-        if len(s2) > 0 and s2.iloc[0] == 0:
-            s2.iloc[0] = 1.0
-        return s2
+    def _align_series(s: pd.Series) -> pd.Series:
+        s = pd.Series(s, index=s.index).astype(float)
+        s = s.reindex(calendar_index).ffill().bfill()
+        if len(s) == 0:
+            return s
+        # If the first point is odd (e.g., 0.0), force it to match the second point
+        if len(s) >= 2:
+            s.iloc[0] = s.iloc[1]
+        else:
+            s.iloc[0] = 1.0
+        return s
 
-    portfolio_index = _align_index_series(portfolio_index)
+    portfolio_index = _align_series(portfolio_index)
 
-    # Align benchmarks too (if present)
     if isinstance(benchmarks, pd.DataFrame) and not benchmarks.empty:
+        # Align each benchmark column to the same calendar index
         for c in list(benchmarks.columns):
-            benchmarks[c] = _align_index_series(benchmarks[c])
+            benchmarks[c] = _align_series(benchmarks[c])
 
-# 3️⃣ Plotly chart
+    if os.getenv("CHART_DEBUG") == "1":
+        try:
+            p0 = float(portfolio_index.iloc[0]) if len(portfolio_index) else None
+            p1 = float(portfolio_index.iloc[1]) if len(portfolio_index) > 1 else None
+            d0 = float(benchmarks["DIA"].iloc[0]) if isinstance(benchmarks, pd.DataFrame) and "DIA" in benchmarks.columns and len(benchmarks["DIA"]) else None
+            q0 = float(benchmarks["QQQ"].iloc[0]) if isinstance(benchmarks, pd.DataFrame) and "QQQ" in benchmarks.columns and len(benchmarks["QQQ"]) else None
+            print(f"[CHART_DEBUG] first2 PORT={p0},{p1} DIA={d0} QQQ={q0}")
+        except Exception as _e:
+            print(f"[CHART_DEBUG] failed: {_e}")
+
+    # 3️⃣ Plotly chart
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
