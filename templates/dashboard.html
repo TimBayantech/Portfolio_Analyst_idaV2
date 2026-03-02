@@ -11,19 +11,16 @@
 <!-- ===================== STICKY TOP BAR ===================== -->
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-center px-4 py-3 bg-light shadow-sm sticky-top">
 
-    <!-- Left: Title & Portfolio -->
     <div class="d-flex flex-column">
         <h1 class="dashboard-title m-0">Mayfair Capital - Portfolio Dashboard</h1>
-        <!-- Portfolio Metric -->
+
         <div class="portfolio-metric">
             <strong>Portfolio:</strong>
 
             <span id="portfolio-pct"
-                class="portfolio-pct 
-                {% if portfolio_pct is not none and portfolio_pct > 0 %} 
-                    pos 
-                {% elif portfolio_pct is not none and portfolio_pct < 0 %} 
-                    neg 
+                class="portfolio-pct
+                {% if portfolio_pct is not none and portfolio_pct > 0 %} pos
+                {% elif portfolio_pct is not none and portfolio_pct < 0 %} neg
                 {% endif %}">
                 {% if portfolio_pct is not none %}
                     {{ "+" if portfolio_pct > 0 else "" }}{{ portfolio_pct }}%
@@ -40,7 +37,6 @@
         </div>
     </div>
 
-    <!-- Right: Buttons -->
     <div class="d-flex align-items-center mt-2 mt-md-0">
         {% if session.admin_logged_in %}
             <button type="button" class="btn btn-outline-warning btn-sm ms-2" id="openAdminBtn">
@@ -48,7 +44,8 @@
             </button>
             <a href="/logout" class="btn btn-outline-secondary btn-sm ms-2">Logout</a>
         {% else %}
-            <button type="button" class="btn btn-outline-secondary btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#loginModal">
+            <button type="button" class="btn btn-outline-secondary btn-sm ms-2"
+                    data-bs-toggle="modal" data-bs-target="#loginModal">
                 Login
             </button>
         {% endif %}
@@ -59,49 +56,36 @@
 <div class="container-fluid p-4">
     <div class="row g-3">
 
-        <!-- LEFT PANEL: Chart + TP/SL -->
+        <!-- LEFT PANEL -->
         <div class="col-lg-8 col-12">
 
             <div class="card shadow-sm p-3 mb-2">
-                {% if chart_html %}
-                    {{ chart_html | safe }}
-                {% endif %}
+                <div id="chartWrap">
+                    {% if chart_html %}
+                        {{ chart_html | safe }}
+                    {% endif %}
+                </div>
             </div>
 
-            <!-- ✅ Portfolio Targets (centered to chart width) -->
             {% if portfolio_settings %}
             <div class="d-flex justify-content-center mt-2">
                 <div class="portfolio-targets mt-2 d-flex justify-content-center gap-2 flex-wrap">
+
                     <span id="tp1-badge"
-                        class="badge
-                        {% if portfolio_settings.tp1_hit %}
-                            bg-warning text-dark fw-bold
-                        {% else %}
-                            bg-success
-                        {% endif %}">
+                        class="badge {% if portfolio_settings.tp1_hit %}bg-warning text-dark fw-bold{% else %}bg-success{% endif %}">
                         TP1: {{ portfolio_settings.tp1 }}%
                     </span>
 
                     <span id="tp2-badge"
-                        class="badge
-                        {% if portfolio_settings.tp2_hit %}
-                            bg-warning text-dark fw-bold
-                        {% else %}
-                            bg-success
-                        {% endif %}">
+                        class="badge {% if portfolio_settings.tp2_hit %}bg-warning text-dark fw-bold{% else %}bg-success{% endif %}">
                         TP2: {{ portfolio_settings.tp2 }}%
                     </span>
 
                     <span id="tp3-badge"
-                        class="badge
-                        {% if portfolio_settings.tp3_hit %}
-                            bg-warning text-dark fw-bold
-                        {% else %}
-                            bg-success
-                        {% endif %}">
+                        class="badge {% if portfolio_settings.tp3_hit %}bg-warning text-dark fw-bold{% else %}bg-success{% endif %}">
                         TP3: {{ portfolio_settings.tp3 }}%
                     </span>
-                    <!-- SL -->
+
                     <span class="badge
                         {% if portfolio_settings.sl_hit %}
                             bg-danger text-white fw-bold blink
@@ -110,17 +94,14 @@
                         {% endif %}">
                         SL: {{ portfolio_settings.stop_loss }}%
                     </span>
+
                 </div>
             </div>
-            {% else %}
-                <div class="text-muted small text-center mt-2">
-                    Portfolio targets not set
-                </div>
             {% endif %}
 
-        </div> <!-- ✅ END LEFT COL -->
+        </div>
 
-        <!-- RIGHT PANEL: Tickers -->
+        <!-- RIGHT PANEL -->
         <div class="col-lg-4 col-12">
             <div class="ticker-panel">
                 {% include 'tickers_partial.html' %}
@@ -130,8 +111,8 @@
     </div>
 </div>
 
-<!-- ===================== LOGIN MODAL ===================== -->
-<div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
+<!-- ===================== MODALS ===================== -->
+<div class="modal fade" id="loginModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
@@ -145,66 +126,21 @@
   </div>
 </div>
 
-<!-- ++++++ADMIN PANEL MODAL++++++++ -->
-<div class="modal fade" id="adminModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="adminModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-        <div class="modal-body" id="adminModalBody">
-            <!-- Admin Panel content will be injected here by Ajax-->
-
-        </div>
+        <div class="modal-body" id="adminModalBody"></div>
     </div>
   </div>
 </div>
 
-
-
-<!-- ===================== JS TO AUTO-REFRESH TICKERS ===================== -->
+<!-- ===================== MAIN JS ===================== -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
 
-    // ===================== Tickers Refresh =====================
-    // Production-safe: refresh tickers less frequently to reduce API load & avoid transient outages
-    setInterval(refreshTickers, 900000);          // 15 minutes
-    setInterval(() => window.location.reload(), 1800000); // 30 minutes
+    setInterval(refreshTickers, 900000);
+    setInterval(() => window.location.reload(), 1800000);
 
-    // ===================== Admin Modal =====================
-    const openAdminBtn = document.getElementById('openAdminBtn');
-    const adminModalEl = document.getElementById('adminModal');
-    const adminModalBody = document.getElementById('adminModalBody');
-    let adminModal;
-
-    if (openAdminBtn) {
-        openAdminBtn.addEventListener('click', async () => {
-            try {
-                const resp = await fetch('/admin?modal=1');
-                const html = await resp.text();
-
-                // Inject content
-                adminModalBody.innerHTML = html;
-
-                // Create Bootstrap modal instance
-                adminModal = new bootstrap.Modal(adminModalEl, {
-                    backdrop: true,
-                    keyboard: true
-                });
-                adminModal.show();
-
-                // Attach AJAX handlers
-                initAdminModalJS();
-
-                // Ensure no leftover backdrops
-                adminModalEl.addEventListener('hidden.bs.modal', () => {
-                    document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
-                });
-
-            } catch (err) {
-                console.error("Failed to load admin panel:", err);
-            }
-        });
-    }
-
-    // ===================== Tickers Refresh Function =====================
     async function refreshTickers() {
         try {
             const resp = await fetch('/tickers-refresh');
@@ -215,144 +151,57 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Error refreshing tickers:', err);
         }
     }
-
-    // ===================== Admin Panel JS =====================
-    function initAdminModalJS() {
-        const emailForm = document.getElementById('emailForm');
-        const flashContainer = document.getElementById('flashContainer');
-
-        if (!emailForm || !flashContainer) return;
-
-        // Helper to show flash
-        function showFlash(msg, category='info') {
-            flashContainer.innerHTML = `
-                <div class="alert alert-${category} alert-sm mt-2">
-                    ${msg}
-                </div>
-            `;
-        }
-
-        // ---------- Add Emails ----------
-        emailForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            flashContainer.innerHTML = "";
-
-            const formData = new FormData(emailForm);
-
-            try {
-                const resp = await fetch(emailForm.action, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await resp.json();
-                showFlash(data.flash, data.category);
-
-                // Attach delete buttons for new emails
-                const inputs = emailForm.querySelectorAll('input[type="email"]');
-                inputs.forEach(input => {
-                    if (input.value && !input.nextElementSibling) {
-                        const btn = document.createElement('button');
-                        btn.type = 'button';
-                        btn.className = 'btn btn-outline-danger btn-sm delete-email-btn';
-                        btn.textContent = '✕';
-                        input.after(btn);
-                        attachDeleteEmail(btn, input);
-                    }
-                });
-
-            } catch (err) {
-                showFlash('Failed to save emails', 'danger');
-                console.error(err);
-            }
-        });
-
-        // ---------- Attach delete buttons ----------
-        const deleteButtons = emailForm.querySelectorAll('.delete-email-btn');
-        deleteButtons.forEach(btn => {
-            const input = btn.previousElementSibling;
-            attachDeleteEmail(btn, input);
-        });
-
-        // ---------- TP/SL Form ----------
-        const tpForm = adminModalBody.querySelector('form[action="/admin/set_targets"]');
-        if (tpForm) {
-            tpForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                flashContainer.innerHTML = "";
-                const formData = new FormData(tpForm);
-
-                try {
-                    const resp = await fetch(tpForm.action, { method: 'POST', body: formData });
-                    if (resp.redirected) {
-                        adminModal.hide();
-                        window.location.reload();
-                    } else {
-                        const text = await resp.text();
-                        console.log(text);
-                    }
-                } catch (err) {
-                    showFlash('Error updating TP/SL', 'danger');
-                    console.error(err);
-                }
-            });
-        }
-
-        // ---------- Upload Portfolio Form ----------
-        const uploadForm = adminModalBody.querySelector('form[action="/admin/upload"]');
-        if (uploadForm) {
-            uploadForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                flashContainer.innerHTML = "";
-                const formData = new FormData(uploadForm);
-
-                try {
-                    const resp = await fetch(uploadForm.action, { method: 'POST', body: formData });
-                    if (resp.redirected) {
-                        showFlash('Portfolio uploaded successfully', 'success');
-                        adminModal.hide();
-                        window.location.reload(); // Refresh dashboard after upload
-                    } else {
-                        const text = await resp.text();
-                        showFlash('Failed to upload portfolio', 'danger');
-                        console.log(text);
-                    }
-                } catch (err) {
-                    showFlash('Error uploading portfolio', 'danger');
-                    console.error(err);
-                }
-            });
-        }
-    }
-
-    // ---------- Delete Email Helper ----------
-    function attachDeleteEmail(btn, input) {
-        const flashContainer = document.getElementById('flashContainer');
-        btn.addEventListener('click', async () => {
-            if (!confirm("Delete this email?")) return;
-
-            const emailId = btn.dataset.id;
-            if (!emailId) return;
-
-            try {
-                const resp = await fetch(`/admin/delete_email/${emailId}`, { method: 'POST' });
-                const data = await resp.json();
-                input.parentElement.remove();
-                flashContainer.innerHTML = `
-                    <div class="alert alert-${data.category} alert-sm mt-2">
-                        ${data.flash}
-                    </div>
-                `;
-            } catch (err) {
-                flashContainer.innerHTML = `
-                    <div class="alert alert-danger alert-sm mt-2">
-                        Failed to delete email
-                    </div>
-                `;
-                console.error(err);
-            }
-        });
-    }
 });
+</script>
+
+<!-- ===================== PLOTLY STABILISER ===================== -->
+<script>
+(function () {
+
+  function stabilisePlotly() {
+    const graphs = document.querySelectorAll("#chartWrap .plotly-graph-div");
+    graphs.forEach(gd => {
+      try {
+
+        // Force resize after layout settles
+        Plotly.Plots.resize(gd);
+
+        if (!gd.data) return;
+
+        let changed = false;
+
+        gd.data.forEach(trace => {
+          if (!trace.y || trace.y.length < 2) return;
+
+          const y0 = trace.y[0];
+          const y1 = trace.y[1];
+
+          const bad = (y0 === null || y0 === undefined || Number.isNaN(y0) || y0 === 0);
+          const goodNext = (y1 !== null && y1 !== undefined && !Number.isNaN(y1));
+
+          if (bad && goodNext) {
+            trace.y[0] = y1;
+            changed = true;
+          }
+        });
+
+        if (changed) {
+          Plotly.redraw(gd);
+        }
+
+      } catch (e) {
+        // silent in prod
+      }
+    });
+  }
+
+  window.addEventListener("load", () => {
+    setTimeout(stabilisePlotly, 200);
+    setTimeout(stabilisePlotly, 800);
+    setTimeout(stabilisePlotly, 1500);
+  });
+
+})();
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
