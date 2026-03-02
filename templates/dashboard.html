@@ -150,7 +150,7 @@
     <div class="modal-content">
         <div class="modal-body" id="adminModalBody">
             <!-- Admin Panel content will be injected here by Ajax-->
-            
+
         </div>
     </div>
   </div>
@@ -163,8 +163,9 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // ===================== Tickers Refresh =====================
-    setInterval(refreshTickers, 60000);
-    setInterval(() => window.location.reload(), 600000);
+    // Production-safe: refresh tickers less frequently to reduce API load & avoid transient outages
+    setInterval(refreshTickers, 900000);          // 15 minutes
+    setInterval(() => window.location.reload(), 1800000); // 30 minutes
 
     // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
@@ -282,12 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const resp = await fetch(tpForm.action, { method: 'POST', body: formData });
                     if (resp.redirected) {
-                        //showFlash('TP/SL updated successfully', 'success');
                         adminModal.hide();
                         window.location.reload();
                     } else {
                         const text = await resp.text();
-                        //showFlash('Failed to update TP/SL', 'danger');
                         console.log(text);
                     }
                 } catch (err) {

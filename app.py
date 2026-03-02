@@ -144,7 +144,11 @@ def av_global_quote(symbol: str, cache_seconds: int = 60):
             "symbol": symbol,
             "apikey": ALPHA_VANTAGE_API_KEY
         })
-        _AV_CACHE["quote"][symbol] = (now, payload)
+        # Only cache successful payloads; do NOT poison the cache with None/invalid responses
+        if payload and isinstance(payload, dict) and payload.get("Global Quote"):
+            _AV_CACHE["quote"][symbol] = (now, payload)
+        else:
+            payload = None
 
     if not payload or "Global Quote" not in payload:
         return None, None
@@ -171,7 +175,11 @@ def av_daily_adjusted(symbol: str, cache_seconds: int = 900):
             "outputsize": "compact",
             "apikey": ALPHA_VANTAGE_API_KEY
         })
-        _AV_CACHE["daily"][symbol] = (now, payload)
+        # Only cache successful payloads; do NOT poison the cache with None/invalid responses
+        if payload and isinstance(payload, dict) and payload.get("Time Series (Daily)"):
+            _AV_CACHE["daily"][symbol] = (now, payload)
+        else:
+            payload = None
 
     if not payload:
         return None
