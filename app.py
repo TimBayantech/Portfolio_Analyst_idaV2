@@ -599,22 +599,38 @@ def dashboard():
     # Build equal-weight index over *calendar days* (weekends included)
     prices = pd.DataFrame(price_cols).reindex(all_days)
 
-    # Ensure we NEVER introduce zeros for missing data; fill both directions so month-start weekends are stable
+    # Any remaining gaps are forward-filled by build_month_close_series; this is just safety
+
+    # Any remaining gaps are forward/back filled; NEVER fill missing prices with 0
     prices = prices.ffill().bfill()
 
-    # Normalize each ticker to Start=1 and then equal-weight average (more robust than pct_change on sparse series)
-    def _safe_norm(col: pd.Series) -> pd.Series:
-        s = col.astype(float).ffill().bfill()
-        base = float(s.iloc[0]) if len(s) else 1.0
-        return (s / base) if base != 0.0 else (s * 0 + 1.0)
+    # Build Equal Weight Portfolio index robustly:
+    # 1) normalize each ticker series to start=1 at the first non-null value
+    # 2) average across tickers (equal weight)
+    norm = pd.DataFrame(index=prices.index)
+    for col in prices.columns:
+        s = prices[col].astype(float).ffill().bfill()
+        s_nonnull = s.dropna()
+        if s_nonnull.empty:
+            continue
+        base = float(s_nonnull.iloc[0])
+        if base == 0:
+            # Should not happen, but guard anyway
+            norm[col] = 1.0
+        else:
+            norm[col] = s / base
 
-    norm_prices = prices.apply(_safe_norm, axis=0)
-    portfolio_index = norm_prices.mean(axis=1)
+    if norm.empty:
+        portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
+        portfolio_pct = 0.00
+    else:
+        portfolio_index = norm.mean(axis=1).ffill().bfill()
+        # Force first point to 1.0 to avoid any month-start NaN/0 quirks
+        if len(portfolio_index) > 0:
+            portfolio_index.iloc[0] = 1.0
+        portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1.0) * 100.0, 2)
 
-    # Portfolio MTD %
-    portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1.0) * 100.0, 2)
-
-# TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
+    # TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
     if portfolio_pct is not None and settings and should_run_alert_check(settings, cooldown_seconds=60):
         check_and_send_portfolio_alerts(settings, portfolio_pct)
 
@@ -630,14 +646,23 @@ def dashboard():
 
         benchmarks = pd.DataFrame(index=all_days)
         if bench_cols:
-            close = pd.DataFrame(bench_cols).reindex(all_days)
+            close = pd.DataFrame(bench_cols).reindex(all_days).ffill().bfill()
 
-            # Ensure full series (month-start weekends): fill both ways, then normalize to Start=1
-            close = close.ffill().bfill()
-
+            # Normalize safely even if the first row is NaN (common on non-trading month start).
             for c in list(close.columns):
-                base = float(close[c].iloc[0])
-                close[c] = (close[c] / base) if base != 0.0 else (close[c] * 0 + 1.0)
+                s = close[c].astype(float).ffill().bfill()
+                s_nonnull = s.dropna()
+                if s_nonnull.empty:
+                    close[c] = 1.0
+                    continue
+                base = float(s_nonnull.iloc[0])
+                if base == 0:
+                    close[c] = 1.0
+                else:
+                    close[c] = s / base
+                # Force the first point to be exactly 1.0 (prevents 0→1 spikes)
+                if len(close[c]) > 0:
+                    close.loc[close.index[0], c] = 1.0
 
             benchmarks = close
     except Exception as e:
