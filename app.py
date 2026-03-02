@@ -669,12 +669,41 @@ def dashboard():
         print(f"⚠️ Benchmark download failed: {e}. Using empty DataFrame instead.")
         benchmarks = pd.DataFrame(index=all_days)
 
-    # 3️⃣ Plotly chart
+    
+    # --- Final alignment guard (prevents 0→1 spikes on Render due to index mismatch) ---
+    calendar_index = all_days  # explicit calendar-day index used for plotting
+
+    def _align_index_series(s: pd.Series) -> pd.Series:
+        """Align a numeric index series to the calendar_index and guarantee Start=1."""
+        if s is None:
+            return pd.Series([1.0] * len(calendar_index), index=calendar_index, dtype="float64")
+        s2 = pd.Series(s.values, index=pd.to_datetime(s.index)).sort_index()
+        s2 = s2.reindex(calendar_index).astype("float64")
+        # never fill missing with 0; use ffill/bfill
+        s2 = s2.replace([float("inf"), float("-inf")], pd.NA).ffill().bfill()
+        if s2.isna().all():
+            s2 = pd.Series([1.0] * len(calendar_index), index=calendar_index, dtype="float64")
+        # Guarantee first point is exactly 1.0
+        if len(s2) > 0:
+            s2.iloc[0] = 1.0
+        # Safety: if any zeros sneak in at the head, lift them to 1.0
+        if len(s2) > 0 and s2.iloc[0] == 0:
+            s2.iloc[0] = 1.0
+        return s2
+
+    portfolio_index = _align_index_series(portfolio_index)
+
+    # Align benchmarks too (if present)
+    if isinstance(benchmarks, pd.DataFrame) and not benchmarks.empty:
+        for c in list(benchmarks.columns):
+            benchmarks[c] = _align_index_series(benchmarks[c])
+
+# 3️⃣ Plotly chart
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=portfolio_index.index,
-            y=portfolio_index.values,
+            x=calendar_index,
+            y=portfolio_index.reindex(calendar_index).values,
             mode="lines+markers",
             name="Equal Weight Portfolio",
         )
@@ -683,8 +712,8 @@ def dashboard():
     if "DIA" in benchmarks.columns:
         fig.add_trace(
             go.Scatter(
-                x=benchmarks.index,
-                y=benchmarks["DIA"],
+                x=calendar_index,
+                y=benchmarks["DIA"].reindex(calendar_index).values,
                 mode="lines+markers",
                 name="DIA",
             )
@@ -693,8 +722,8 @@ def dashboard():
     if "QQQ" in benchmarks.columns:
         fig.add_trace(
             go.Scatter(
-                x=benchmarks.index,
-                y=benchmarks["QQQ"],
+                x=calendar_index,
+                y=benchmarks["QQQ"].reindex(calendar_index).values,
                 mode="lines+markers",
                 name="QQQ",
             )
