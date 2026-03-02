@@ -691,7 +691,9 @@ def dashboard():
         tickformat="%d %b"  # 01 Mar
     )
 
-    chart_html = pio.to_html(fig, full_html=False)
+    chart_html = pio.to_html(fig, full_html=False, include_plotlyjs=False)
+
+    print(f"[DEBUG] chart_html_bytes={len(chart_html) if chart_html else 0}")
 
     return render_template(
         "dashboard.html",
