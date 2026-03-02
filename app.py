@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from flask_sqlalchemy import SQLAlchemy
 import os
 import json
+import re
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import inspect, text
@@ -76,10 +77,25 @@ with app.app_context():
 # ----------------------------
 import urllib.request
 import urllib.parse
+import urllib.error
 
 ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY")
 if not ALPHA_VANTAGE_API_KEY:
     raise RuntimeError("ALPHA_VANTAGE_API_KEY must be set (Alpha Vantage is required for market data).")
+
+
+# Debug logging for Alpha Vantage responses.
+# Set AV_DEBUG=1 in your environment to enable verbose logging.
+AV_DEBUG = os.environ.get("AV_DEBUG", "0") == "1"
+
+def _av_redact_url(url: str) -> str:
+    # avoid leaking API key into logs
+    return re.sub(r"(apikey=)[^&]+", r"\1***", url)
+
+def _av_dbg(msg: str):
+    if AV_DEBUG:
+        print(msg)
+
 
 _AV_CACHE = {
     "quote": {},  # symbol -> (ts_epoch, payload)
@@ -96,9 +112,17 @@ def _now_epoch() -> float:
     return time.time()
 
 def av_get_json(params: dict, retries: int = 3, base_sleep: float = 1.0):
-    """Call Alpha Vantage and return parsed JSON (dict) or None on failure."""
+    """Call Alpha Vantage and return parsed JSON (dict) or None on failure.
+
+    Debug:
+      - set AV_DEBUG=1 to print URL (redacted), status/bytes, top-level keys,
+        and any throttle/error messages (Note/Information/Error Message).
+    """
     q = urllib.parse.urlencode(params)
     url = f"https://www.alphavantage.co/query?{q}"
+
+    func = params.get("function")
+    sym = params.get("symbol")
 
     last_err = None
     for attempt in range(1, retries + 1):
@@ -112,33 +136,64 @@ def av_get_json(params: dict, retries: int = 3, base_sleep: float = 1.0):
                     time.sleep(wait_s + random.uniform(0, 0.05))
                 _AV_LAST_CALL_TS = time.time()
 
-            with urllib.request.urlopen(url, timeout=20) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-            data = json.loads(raw)
+            _av_dbg(f"🛰️ AV request: function={func} symbol={sym} attempt={attempt}/{retries} url={_av_redact_url(url)}")
 
-            # Alpha Vantage rate limit / throttling responses
-            if isinstance(data, dict) and ("Note" in data or "Information" in data):
-                raise RuntimeError(data.get("Note") or data.get("Information"))
+            try:
+                with urllib.request.urlopen(url, timeout=20) as resp:
+                    status = getattr(resp, "status", None)
+                    raw_bytes = resp.read()
+                raw = raw_bytes.decode("utf-8", errors="replace")
+                _av_dbg(f"✅ AV HTTP {status} bytes={len(raw_bytes)} head={raw[:180].replace(chr(10),' ')[:180]}")
+            except urllib.error.HTTPError as he:
+                body = he.read().decode("utf-8", errors="replace")
+                _av_dbg(f"❌ AV HTTPError {he.code} function={func} symbol={sym} body_head={body[:220].replace(chr(10),' ')[:220]}")
+                raise
+            except urllib.error.URLError as ue:
+                _av_dbg(f"❌ AV URLError function={func} symbol={sym} err={ue}")
+                raise
+
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                keys = list(data.keys())
+                _av_dbg(f"🔎 AV keys: {keys}")
+
+                # Alpha Vantage rate limit / throttling / errors
+                if "Note" in data:
+                    note = str(data.get("Note", ""))[:240]
+                    _av_dbg(f"⚠️ AV THROTTLED Note: {note}")
+                    raise RuntimeError(data.get("Note"))
+                if "Information" in data:
+                    info = str(data.get("Information", ""))[:240]
+                    _av_dbg(f"⚠️ AV Information: {info}")
+                    raise RuntimeError(data.get("Information"))
+                if "Error Message" in data:
+                    em = str(data.get("Error Message", ""))[:240]
+                    _av_dbg(f"❌ AV Error Message: {em}")
+                    raise RuntimeError(data.get("Error Message"))
 
             return data
+
         except Exception as e:
             last_err = e
             sleep_s = base_sleep * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
-            print(f"⚠️ Alpha Vantage call failed (attempt {attempt}/{retries}): {e}")
+            print(f"⚠️ Alpha Vantage call failed (attempt {attempt}/{retries}) function={func} symbol={sym}: {e}")
             if attempt < retries:
                 time.sleep(sleep_s)
-
-    print(f"❌ Alpha Vantage call failed after {retries} attempts: {last_err}")
+    print(f"❌ Alpha Vantage call failed after {retries} attempts function={func} symbol={sym}: {last_err}")
     return None
+
 
 def av_global_quote(symbol: str, cache_seconds: int = 60):
     """Return (price, prev_close) floats or (None, None) if unavailable."""
     symbol = symbol.strip().upper()
+    _av_dbg(f"📌 GLOBAL_QUOTE {symbol} cache_seconds={cache_seconds}")
     cached = _AV_CACHE["quote"].get(symbol)
     now = _now_epoch()
     if cached and (now - cached[0]) < cache_seconds:
+        _av_dbg(f"🟢 quote cache hit {symbol}")
         payload = cached[1]
     else:
+        _av_dbg(f"🟠 quote cache miss {symbol} -> calling AV")
         payload = av_get_json({
             "function": "GLOBAL_QUOTE",
             "symbol": symbol,
@@ -167,8 +222,10 @@ def av_daily_adjusted(symbol: str, cache_seconds: int = 900):
     cached = _AV_CACHE["daily"].get(symbol)
     now = _now_epoch()
     if cached and (now - cached[0]) < cache_seconds:
+        _av_dbg(f"🟢 daily cache hit {symbol}")
         payload = cached[1]
     else:
+        _av_dbg(f"🟠 daily cache miss {symbol} -> calling AV")
         payload = av_get_json({
             "function": "TIME_SERIES_DAILY_ADJUSTED",
             "symbol": symbol,
@@ -239,6 +296,60 @@ def av_close_series(symbol: str, start_date: pd.Timestamp, end_date: pd.Timestam
     s = s.sort_index()
     return s
 
+
+
+def build_month_close_series(symbol: str, month_start: pd.Timestamp, today: pd.Timestamp, all_days: pd.DatetimeIndex) -> pd.Series:
+    """Build a month-to-date *calendar-day* close series.
+
+    - Uses AV daily adjusted series (cached) for trading days in [month_start, today]
+    - Reindexes to calendar days and forward-fills (so weekends show)
+    - If there are *no* trading days yet in the current month (e.g., month starts on weekend/holiday),
+      returns a flat series seeded with the last available close <= today.
+    """
+    ts = av_daily_adjusted(symbol)
+    if not ts:
+        return pd.Series(dtype="float64")
+
+    rows = []
+    for ds, vals in ts.items():
+        try:
+            d = pd.to_datetime(ds).normalize()
+            if d > today:
+                continue
+            # Prefer adjusted close; fall back to close if needed
+            close = float((vals or {}).get("5. adjusted close") or (vals or {}).get("4. close"))
+            rows.append((d, close))
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.Series(dtype="float64")
+
+    rows.sort(key=lambda x: x[0])
+    last_close = rows[-1][1]
+
+    in_month = [(d, c) for d, c in rows if month_start <= d <= today]
+    if not in_month:
+        # No trading days yet this month
+        return pd.Series([last_close] * len(all_days), index=all_days, dtype="float64")
+
+    s = pd.Series({d: c for d, c in in_month}).sort_index()
+    s = s.reindex(all_days)
+
+    # Fill initial NaNs (before first trading day) with last_close from previous month
+    first_valid = s.first_valid_index()
+    if first_valid is None:
+        return pd.Series([last_close] * len(all_days), index=all_days, dtype="float64")
+
+    if pd.isna(s.iloc[0]):
+        s.loc[:first_valid] = s.loc[:first_valid].fillna(last_close)
+
+    # Fill the rest forward (weekends / missing days)
+    s = s.ffill()
+
+    return s
+
+
 # ----------------------------
 # Helper function to get live prices
 # ----------------------------
@@ -256,7 +367,6 @@ def get_live_prices(tickers):
 
     today = pd.Timestamp.today().normalize()
     start_of_month = today.replace(day=1)
-    is_month_start_non_trading = (today == start_of_month) and (today.weekday() >= 5)
 
     for t in tickers:
         try:
@@ -279,7 +389,7 @@ def get_live_prices(tickers):
                     raise ValueError("No data returned")
 
                 price = float(last_close)
-                pct = 0.0 if is_month_start_non_trading else None
+                pct = 0.0
 
             live_data[t] = {"price": round(price, 2), "pct": None if pct is None else round(float(pct), 2)}
         except Exception as e:
@@ -467,62 +577,51 @@ def dashboard():
 
     price_cols = {}
     for sym in tickers:
-        s = av_close_series(sym, start_date=start_date, end_date=end_date)
-        if not s.empty:
+        s = build_month_close_series(sym, month_start=start_of_month, today=today, all_days=all_days)
+        if s is not None and not s.empty:
             price_cols[sym] = s
 
-    # If we have no rows at all for the current month, this can be normal on the first day
-    # of the month when it's a weekend/holiday (no trading session yet). In that case, render
-    # a flat chart and set MTD to 0.00% so the UI doesn't look broken.
+    _av_dbg(f"📈 CHART month={start_date.date()}..{end_date.date()} series_ok={len(price_cols)}/{len(tickers)} missing={[s for s in tickers if s not in price_cols]}")
+
+    # If we still have nothing, it's a genuine data/API issue (or AV key missing/blocked)
     if not price_cols:
-        is_month_start = (today == start_of_month)
-        is_weekend = (today.weekday() >= 5)
-        if is_month_start and is_weekend:
-            portfolio_pct = 0.00
-            portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
-        else:
-            return render_template(
-                "dashboard.html",
-                message="Market data temporarily unavailable (Alpha Vantage). Please refresh later.",
-                portfolio_settings=settings,
-                portfolio_pct=None,
-                last_updated=last_updated,
-                chart_html=None,
-                tickers=tickers_data,
-            )
+        _av_dbg("🚫 CHART: no daily series available; rendering unavailable state")
+        return render_template(
+            "dashboard.html",
+            message="Market data temporarily unavailable (Alpha Vantage). Please refresh later.",
+            portfolio_settings=settings,
+            portfolio_pct=None,
+            last_updated=last_updated,
+            chart_html=None,
+            tickers=tickers_data,
+        )
 
-    # Only compute returns/index if we actually have month data.
-    if price_cols:
-        prices = pd.DataFrame(price_cols)
-        prices = prices.reindex(all_days).ffill()
+    # Build equal-weight index over *calendar days* (weekends included)
+    prices = pd.DataFrame(price_cols).reindex(all_days)
 
-        # If there are no trading days yet this month (e.g. month starts on a weekend/holiday),
-        # avoid blank portfolio/chart by showing a flat 0.00% MTD and a flat index line at 1.0.
-        if prices.dropna(how="all").empty:
-            portfolio_pct = 0.00
-            portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
-        else:
-            returns = prices.pct_change().fillna(0)
-            portfolio_index = (1 + returns.mean(axis=1)).cumprod()
+    # Any remaining gaps are forward-filled by build_month_close_series; this is just safety
+    prices = prices.ffill()
 
-            # Normalize safely (handle NaN in the first row)
-            first_valid = portfolio_index.first_valid_index()
-            if first_valid is None:
-                portfolio_pct = 0.00
-                portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
-            else:
-                portfolio_index = portfolio_index / float(portfolio_index.loc[first_valid])
-                portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1) * 100, 2)
+    returns = prices.pct_change().fillna(0)
+    portfolio_index = (1 + returns.mean(axis=1)).cumprod()
 
-    # TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
+    fv = portfolio_index.first_valid_index()
+    if fv is None:
+        portfolio_index = pd.Series([1.0] * len(all_days), index=all_days)
+        portfolio_pct = 0.00
+    else:
+        portfolio_index = portfolio_index / float(portfolio_index.loc[fv])
+        portfolio_pct = round((float(portfolio_index.iloc[-1]) - 1) * 100, 2)
+
+# TP/SL alerts: guard with cooldown to prevent duplicate sends on multi-worker deployments
     if portfolio_pct is not None and settings and should_run_alert_check(settings, cooldown_seconds=60):
         check_and_send_portfolio_alerts(settings, portfolio_pct)
 
     # 2️⃣ Benchmarks (ETF proxies via Alpha Vantage): DIA (Dow proxy) & QQQ (Nasdaq-100 proxy)
     try:
         bench_cols = {}
-        dia = av_close_series("DIA", start_date=start_of_month, end_date=today)
-        qqq = av_close_series("QQQ", start_date=start_of_month, end_date=today)
+        dia = build_month_close_series("DIA", month_start=start_of_month, today=today, all_days=all_days)
+        qqq = build_month_close_series("QQQ", month_start=start_of_month, today=today, all_days=all_days)
         if not dia.empty:
             bench_cols["DIA"] = dia
         if not qqq.empty:
