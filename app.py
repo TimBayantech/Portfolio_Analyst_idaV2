@@ -3,6 +3,114 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objs as go
 import plotly.io as pio
+import requests
+import time
+from typing import Any, Optional, Dict, Tuple
+
+# ===================== Alpha Vantage helpers (quotes + MTD) =====================
+AV_BASE_URL = "https://www.alphavantage.co/query"
+AV_API_KEY = os.environ.get("ALPHAVANTAGE_API_KEY") or os.environ.get("ALPHA_VANTAGE_API_KEY")
+
+# very small in-process cache to reduce API calls
+_AV_CACHE: Dict[str, Tuple[float, Any]] = {}  # key -> (expires_epoch, value)
+
+def _cache_get(key: str):
+    item = _AV_CACHE.get(key)
+    if not item:
+        return None
+    exp, val = item
+    if time.time() > exp:
+        _AV_CACHE.pop(key, None)
+        return None
+    return val
+
+def _cache_set(key: str, val: Any, ttl_seconds: int):
+    _AV_CACHE[key] = (time.time() + ttl_seconds, val)
+
+def _av_get(params: Dict[str, str], ttl_seconds: int = 60) -> Optional[dict]:
+    """GET Alpha Vantage JSON with basic caching + error handling."""
+    if not AV_API_KEY:
+        return None
+    params = dict(params)
+    params["apikey"] = AV_API_KEY
+
+    cache_key = "av:" + json.dumps(params, sort_keys=True)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        r = requests.get(AV_BASE_URL, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return None
+
+    # AV will return "Note" when throttled, or "Error Message" for bad tickers
+    if not isinstance(data, dict) or data.get("Note") or data.get("Error Message"):
+        _cache_set(cache_key, data, 30)  # short cache to avoid hammering
+        return data
+
+    _cache_set(cache_key, data, ttl_seconds)
+    return data
+
+def av_global_quote(symbol: str) -> Optional[float]:
+    data = _av_get({"function": "GLOBAL_QUOTE", "symbol": symbol}, ttl_seconds=60)
+    if not data or not isinstance(data, dict):
+        return None
+    q = data.get("Global Quote") or {}
+    price_str = q.get("05. price") or q.get("05. price ".strip())
+    try:
+        return float(price_str)
+    except Exception:
+        return None
+
+def av_month_start_close(symbol: str, month_start: datetime.date) -> Optional[float]:
+    """Return the first trading day's close within the given month, else None."""
+    month_key = month_start.strftime("%Y-%m")
+    cache_key = f"mstart:{symbol}:{month_key}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    data = _av_get({"function": "TIME_SERIES_DAILY_ADJUSTED", "symbol": symbol, "outputsize": "compact"}, ttl_seconds=15*60)
+    if not data or not isinstance(data, dict):
+        _cache_set(cache_key, None, 5*60)
+        return None
+
+    ts = data.get("Time Series (Daily)")
+    if not isinstance(ts, dict) or not ts:
+        _cache_set(cache_key, None, 5*60)
+        return None
+
+    # find first trading day within the month
+    dates_in_month = [d for d in ts.keys() if d.startswith(month_key)]
+    if not dates_in_month:
+        _cache_set(cache_key, None, 30*60)
+        return None
+
+    first_day = min(dates_in_month)
+    try:
+        close_str = ts[first_day].get("4. close")
+        val = float(close_str)
+    except Exception:
+        val = None
+
+    _cache_set(cache_key, val, 6*60*60)
+    return val
+
+def compute_mtd_pct(symbol: str, price_now: Optional[float], month_start: datetime.date) -> Optional[float]:
+    """
+    MTD % = (current_price / first_trading_day_close_in_month - 1) * 100.
+    If the month has not had a trading day yet, return 0.0.
+    """
+    if price_now is None:
+        return None
+    start_close = av_month_start_close(symbol, month_start)
+    if start_close is None or start_close == 0:
+        return 0.0
+    return (price_now / start_close - 1.0) * 100.0
+
 from datetime import datetime, timedelta
 from flask_sqlalchemy import SQLAlchemy
 import os
@@ -13,12 +121,8 @@ from models import db, User, PortfolioTicker, PortfolioSettings, AlertEmail
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from dotenv import load_dotenv
-import requests
-import time
 
 load_dotenv()  # reads .env into os.environ
-
-ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY") or os.environ.get("ALPHAVANTAGE_API_KEY")
 
 # ===============================
 # Flask App Initialization
@@ -41,14 +145,6 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 # ✅ Bind SQLAlchemy to this app
 db.init_app(app)
 
-
-# ----------------------------
-# Health Check (Render)
-# ----------------------------
-@app.get("/health")
-def health():
-    return "ok", 200
-
 # ✅ Create tables
 with app.app_context():
     db.create_all()
@@ -60,121 +156,26 @@ if os.environ.get("RENDER"):
 # ----------------------------
 # Helper function to get live prices
 # ----------------------------
-# ----------------------------
-# Quotes for tiles
-# - Prefer Alpha Vantage (GLOBAL_QUOTE) when ALPHA_VANTAGE_API_KEY is set
-# - Fallback to yfinance locally if AV key is missing
-# ----------------------------
-
-_AV_QUOTE_CACHE = {}  # symbol -> (ts_epoch, {"price": float|None, "pct": float|None})
-_AV_QUOTE_TTL_SECONDS = int(os.environ.get("AV_QUOTE_TTL_SECONDS", "120"))  # 2 mins default
-
-def _get_live_prices_yf(tickers):
-    data = yf.download(
-        tickers,
-        period="2d",
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False
-    )
-    live_data = {}
-    for t in tickers:
-        try:
-            df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
-            last = float(df["Close"].iloc[-1])
-            prev = float(df["Close"].iloc[-2])
-            pct = (last / prev - 1) * 100
-            live_data[t] = {"price": round(last, 2), "pct": round(pct, 2)}
-        except Exception:
-            live_data[t] = {"price": None, "pct": None}
-    return live_data
-
-
-def _av_global_quote(symbol: str, attempt: int = 1, max_attempts: int = 3):
-    """Fetch a single GLOBAL_QUOTE from Alpha Vantage. Returns (price, prev_close) floats or (None, None)."""
-    if not ALPHA_VANTAGE_API_KEY:
-        return None, None
-
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "GLOBAL_QUOTE",
-        "symbol": symbol,
-        "apikey": ALPHA_VANTAGE_API_KEY,
-    }
-
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        if attempt < max_attempts:
-            time.sleep(0.7 * attempt)
-            return _av_global_quote(symbol, attempt + 1, max_attempts)
-        return None, None
-
-    # Rate limit / error payloads
-    if isinstance(data, dict) and (data.get("Note") or data.get("Information")):
-        msg = data.get("Note") or data.get("Information")
-        print(f"⚠️ Alpha Vantage note for {symbol}: {msg}")
-        if attempt < max_attempts:
-            # Back off a bit more when AV tells us to slow down
-            time.sleep(2.0 * attempt)
-            return _av_global_quote(symbol, attempt + 1, max_attempts)
-        return None, None
-
-    q = (data or {}).get("Global Quote") or {}
-    price_s = q.get("05. price") or q.get("05. Price")
-    prev_s = q.get("08. previous close") or q.get("08. Previous close") or q.get("08. Previous Close")
-
-    try:
-        price = float(price_s) if price_s not in (None, "", "None") else None
-        prev = float(prev_s) if prev_s not in (None, "", "None") else None
-    except Exception:
-        return None, None
-
-    return price, prev
-
-
-def _get_live_prices_av(tickers):
-    now = time.time()
+def get_live_prices(tickers):
+    """
+    Returns dict: {symbol: {"price": float|None, "pct": float|None}}
+    where pct is Month-to-Date % (equal weight logic uses avg of these).
+    """
+    month_start = datetime(datetime.now().year, datetime.now().month, 1).date()
     out = {}
 
-    # Use cache first
-    to_fetch = []
-    for sym in tickers:
-        cached = _AV_QUOTE_CACHE.get(sym)
-        if cached and (now - cached[0]) <= _AV_QUOTE_TTL_SECONDS:
-            out[sym] = cached[1]
-        else:
-            to_fetch.append(sym)
+    for t in tickers:
+        sym = (t or "").strip().upper()
+        if not sym:
+            continue
 
-    # Throttle to avoid burst (keep <= 5 req/sec)
-    # 0.25s spacing -> 4 req/sec
-    for i, sym in enumerate(to_fetch):
-        price, prev = _av_global_quote(sym)
-        if price is None or prev is None or prev == 0:
-            payload = {"price": None, "pct": None}
-        else:
-            pct = (price / prev - 1) * 100
-            payload = {"price": round(price, 2), "pct": round(pct, 2)}
+        # GLOBAL_QUOTE is the simplest consistent "delayed" quote for US tickers
+        price = av_global_quote(sym)
+        pct = compute_mtd_pct(sym, price, month_start)
 
-        _AV_QUOTE_CACHE[sym] = (time.time(), payload)
-        out[sym] = payload
-
-        # Spread requests evenly (except after last)
-        if i < len(to_fetch) - 1:
-            time.sleep(0.25)
+        out[sym] = {"price": price, "pct": pct}
 
     return out
-
-
-def get_live_prices(tickers):
-    """Unified tile quotes getter."""
-    # Prefer Alpha Vantage for production stability
-    if ALPHA_VANTAGE_API_KEY:
-        return _get_live_prices_av(tickers)
-    return _get_live_prices_yf(tickers)
 
 
 # ----------------------------
@@ -314,7 +315,7 @@ def dashboard():
     end_of_month = (start_of_month + pd.offsets.MonthEnd(1)).normalize()
 
     # Full month calendar
-    all_days = pd.date_range(start=start_of_month, end=end_of_month, freq="D")
+    all_days = pd.date_range(start=start_of_month, end=today, freq="D")
 
     # 1️⃣ Download portfolio historical data
     hist_data = yf.download(
@@ -375,11 +376,7 @@ def dashboard():
             first_trading_day_benchmark = benchmarks.index.min()
             benchmarks = benchmarks / benchmarks.loc[first_trading_day_benchmark]
             benchmarks = benchmarks.reindex(all_days).ffill()
-
-    # Optional: blank future days
-    portfolio_index.loc[portfolio_index.index > today] = None
-    if not benchmarks.empty:
-        benchmarks.loc[benchmarks.index > today] = None
+    # (No need to blank future days since we only plot up to 'today')
 
     # Check if there is any actual data to display
     message = None
@@ -414,7 +411,14 @@ def dashboard():
         )
     )
 
-    chart_html = fig.to_html(full_html=False, include_plotlyjs=False)
+
+    # Override portfolio_pct to be the equal-weight MTD = avg of ticker MTD % values (from tiles)
+    _mtd_vals = [t.get("pct") for t in tickers_data if t.get("pct") is not None]
+    if _mtd_vals:
+        portfolio_pct = round(sum(_mtd_vals) / len(_mtd_vals), 2)
+    else:
+        portfolio_pct = 0.0
+    chart_html = pio.to_html(fig, full_html=False, include_plotlyjs=False)
 
     return render_template("dashboard.html", 
                             portfolio_settings=settings,
@@ -693,4 +697,4 @@ def admin_test_email():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True,use_reloader=False)

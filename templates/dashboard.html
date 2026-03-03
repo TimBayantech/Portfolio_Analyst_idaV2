@@ -168,6 +168,8 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // ===================== Tickers Refresh =====================
+    // Delay first refresh so deploy/startup isn't hammered
+    setTimeout(refreshTickers, 20000);
     // Prevent hammering /tickers-refresh during deploy/boot:
     // - wait 60s before the first refresh
     // - refresh every 5 mins thereafter (AV is 15-min delayed anyway)
