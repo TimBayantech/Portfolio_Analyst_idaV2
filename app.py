@@ -414,7 +414,7 @@ def dashboard():
         )
     )
 
-    chart_html = pio.to_html(fig, full_html=False)
+    chart_html = fig.to_html(full_html=False, include_plotlyjs=False)
 
     return render_template("dashboard.html", 
                             portfolio_settings=settings,
