@@ -294,18 +294,33 @@ def dashboard():
     if "^FTSE" in benchmarks.columns:
         fig.add_trace(go.Scatter(x=benchmarks.index, y=benchmarks["^FTSE"],
                                 mode="lines+markers", name="FTSE 100"))
+        
+    month_text = datetime.now().strftime("%B %Y")
 
     fig.update_layout(
-        title="Monthly Portfolio vs DOW & NASDAQ",
+        title=f"Monthly Portfolio vs DOW, NASDAQ & FTSE - {month_text}",
         xaxis_title="Date",
         yaxis_title="Index (Start=1)",
         template="plotly_white",
         xaxis=dict(
-            tickformat="%Y-%m-%d",
+            tickformat="%d-%m",
             tickmode="auto",
             nticks=10
         )
     )
+
+    all_values = pd.concat([
+        portfolio_index.dropna(),
+        benchmarks.stack().dropna() if not benchmarks.empty else pd.Series()
+    ])
+
+    if not all_values.empty:
+        ymin = all_values.min()
+        ymax = all_values.max()
+        padding = 0.02  # 2% visual padding
+        fig.update_layout(
+            yaxis=dict(range=[ymin - padding, ymax + padding])
+        )
 
     chart_html = pio.to_html(fig, full_html=False)
 
