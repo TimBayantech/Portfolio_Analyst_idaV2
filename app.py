@@ -13,8 +13,12 @@ from models import db, User, PortfolioTicker, PortfolioSettings, AlertEmail
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from dotenv import load_dotenv
+import requests
+import time
 
 load_dotenv()  # reads .env into os.environ
+
+ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY") or os.environ.get("ALPHAVANTAGE_API_KEY")
 
 # ===============================
 # Flask App Initialization
@@ -37,6 +41,14 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 # ✅ Bind SQLAlchemy to this app
 db.init_app(app)
 
+
+# ----------------------------
+# Health Check (Render)
+# ----------------------------
+@app.get("/health")
+def health():
+    return "ok", 200
+
 # ✅ Create tables
 with app.app_context():
     db.create_all()
@@ -48,10 +60,19 @@ if os.environ.get("RENDER"):
 # ----------------------------
 # Helper function to get live prices
 # ----------------------------
-def get_live_prices(tickers):
+# ----------------------------
+# Quotes for tiles
+# - Prefer Alpha Vantage (GLOBAL_QUOTE) when ALPHA_VANTAGE_API_KEY is set
+# - Fallback to yfinance locally if AV key is missing
+# ----------------------------
+
+_AV_QUOTE_CACHE = {}  # symbol -> (ts_epoch, {"price": float|None, "pct": float|None})
+_AV_QUOTE_TTL_SECONDS = int(os.environ.get("AV_QUOTE_TTL_SECONDS", "120"))  # 2 mins default
+
+def _get_live_prices_yf(tickers):
     data = yf.download(
         tickers,
-        period="2d",  # later version to be tested with "5d"
+        period="2d",
         interval="1d",
         group_by="ticker",
         auto_adjust=True,
@@ -61,13 +82,99 @@ def get_live_prices(tickers):
     for t in tickers:
         try:
             df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
-            last = df["Close"].iloc[-1]
-            prev = df["Close"].iloc[-2]
+            last = float(df["Close"].iloc[-1])
+            prev = float(df["Close"].iloc[-2])
             pct = (last / prev - 1) * 100
             live_data[t] = {"price": round(last, 2), "pct": round(pct, 2)}
         except Exception:
             live_data[t] = {"price": None, "pct": None}
     return live_data
+
+
+def _av_global_quote(symbol: str, attempt: int = 1, max_attempts: int = 3):
+    """Fetch a single GLOBAL_QUOTE from Alpha Vantage. Returns (price, prev_close) floats or (None, None)."""
+    if not ALPHA_VANTAGE_API_KEY:
+        return None, None
+
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "GLOBAL_QUOTE",
+        "symbol": symbol,
+        "apikey": ALPHA_VANTAGE_API_KEY,
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        if attempt < max_attempts:
+            time.sleep(0.7 * attempt)
+            return _av_global_quote(symbol, attempt + 1, max_attempts)
+        return None, None
+
+    # Rate limit / error payloads
+    if isinstance(data, dict) and (data.get("Note") or data.get("Information")):
+        msg = data.get("Note") or data.get("Information")
+        print(f"⚠️ Alpha Vantage note for {symbol}: {msg}")
+        if attempt < max_attempts:
+            # Back off a bit more when AV tells us to slow down
+            time.sleep(2.0 * attempt)
+            return _av_global_quote(symbol, attempt + 1, max_attempts)
+        return None, None
+
+    q = (data or {}).get("Global Quote") or {}
+    price_s = q.get("05. price") or q.get("05. Price")
+    prev_s = q.get("08. previous close") or q.get("08. Previous close") or q.get("08. Previous Close")
+
+    try:
+        price = float(price_s) if price_s not in (None, "", "None") else None
+        prev = float(prev_s) if prev_s not in (None, "", "None") else None
+    except Exception:
+        return None, None
+
+    return price, prev
+
+
+def _get_live_prices_av(tickers):
+    now = time.time()
+    out = {}
+
+    # Use cache first
+    to_fetch = []
+    for sym in tickers:
+        cached = _AV_QUOTE_CACHE.get(sym)
+        if cached and (now - cached[0]) <= _AV_QUOTE_TTL_SECONDS:
+            out[sym] = cached[1]
+        else:
+            to_fetch.append(sym)
+
+    # Throttle to avoid burst (keep <= 5 req/sec)
+    # 0.25s spacing -> 4 req/sec
+    for i, sym in enumerate(to_fetch):
+        price, prev = _av_global_quote(sym)
+        if price is None or prev is None or prev == 0:
+            payload = {"price": None, "pct": None}
+        else:
+            pct = (price / prev - 1) * 100
+            payload = {"price": round(price, 2), "pct": round(pct, 2)}
+
+        _AV_QUOTE_CACHE[sym] = (time.time(), payload)
+        out[sym] = payload
+
+        # Spread requests evenly (except after last)
+        if i < len(to_fetch) - 1:
+            time.sleep(0.25)
+
+    return out
+
+
+def get_live_prices(tickers):
+    """Unified tile quotes getter."""
+    # Prefer Alpha Vantage for production stability
+    if ALPHA_VANTAGE_API_KEY:
+        return _get_live_prices_av(tickers)
+    return _get_live_prices_yf(tickers)
 
 
 # ----------------------------
@@ -294,33 +401,18 @@ def dashboard():
     if "^FTSE" in benchmarks.columns:
         fig.add_trace(go.Scatter(x=benchmarks.index, y=benchmarks["^FTSE"],
                                 mode="lines+markers", name="FTSE 100"))
-        
-    month_text = datetime.now().strftime("%B %Y")
 
     fig.update_layout(
-        title=f"Monthly Portfolio vs DOW, NASDAQ & FTSE - {month_text}",
+        title="Monthly Portfolio vs DOW & NASDAQ",
         xaxis_title="Date",
         yaxis_title="Index (Start=1)",
         template="plotly_white",
         xaxis=dict(
-            tickformat="%d-%m",
+            tickformat="%Y-%m-%d",
             tickmode="auto",
             nticks=10
         )
     )
-
-    all_values = pd.concat([
-        portfolio_index.dropna(),
-        benchmarks.stack().dropna() if not benchmarks.empty else pd.Series()
-    ])
-
-    if not all_values.empty:
-        ymin = all_values.min()
-        ymax = all_values.max()
-        padding = 0.02  # 2% visual padding
-        fig.update_layout(
-            yaxis=dict(range=[ymin - padding, ymax + padding])
-        )
 
     chart_html = pio.to_html(fig, full_html=False)
 
