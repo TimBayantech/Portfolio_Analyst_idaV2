@@ -4,7 +4,6 @@
     <title>Mayfair Capital - Portfolio Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body>
 
@@ -158,31 +157,21 @@
     <div class="modal-content">
         <div class="modal-body" id="adminModalBody">
             <!-- Admin Panel content will be injected here by Ajax-->
+            
         </div>
     </div>
   </div>
 </div>
+
+
 
 <!-- ===================== JS TO AUTO-REFRESH TICKERS ===================== -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
 
     // ===================== Tickers Refresh =====================
-    // Delay first refresh so deploy/startup isn't hammered
-    setTimeout(refreshTickers, 20000);
-    // Prevent hammering /tickers-refresh during deploy/boot:
-    // - wait 60s before the first refresh
-    // - refresh every 5 mins thereafter (AV is 15-min delayed anyway)
-    const FIRST_REFRESH_DELAY_MS = 60000;   // 60s
-    const TICKERS_REFRESH_MS     = 300000;  // 5 mins
-    const FULL_RELOAD_MS         = 1800000; // 30 mins
-
-    setTimeout(() => {
-        refreshTickers();
-        setInterval(refreshTickers, TICKERS_REFRESH_MS);
-    }, FIRST_REFRESH_DELAY_MS);
-
-    setInterval(() => window.location.reload(), FULL_RELOAD_MS);
+    setInterval(refreshTickers, 60000);
+    setInterval(() => window.location.reload(), 600000);
 
     // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
@@ -223,7 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===================== Tickers Refresh Function =====================
     async function refreshTickers() {
         try {
-            const resp = await fetch('/tickers-refresh', { cache: 'no-store' });
+            const resp = await fetch('/tickers-refresh');
             const html = await resp.text();
             const panel = document.querySelector('.ticker-panel');
             if (panel) panel.innerHTML = html;
@@ -239,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!emailForm || !flashContainer) return;
 
+        // Helper to show flash
         function showFlash(msg, category='info') {
             flashContainer.innerHTML = `
                 <div class="alert alert-${category} alert-sm mt-2">
@@ -247,6 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
 
+        // ---------- Add Emails ----------
         emailForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             flashContainer.innerHTML = "";
@@ -261,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await resp.json();
                 showFlash(data.flash, data.category);
 
+                // Attach delete buttons for new emails
                 const inputs = emailForm.querySelectorAll('input[type="email"]');
                 inputs.forEach(input => {
                     if (input.value && !input.nextElementSibling) {
@@ -279,12 +271,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // ---------- Attach delete buttons ----------
         const deleteButtons = emailForm.querySelectorAll('.delete-email-btn');
         deleteButtons.forEach(btn => {
             const input = btn.previousElementSibling;
             attachDeleteEmail(btn, input);
         });
 
+        // ---------- TP/SL Form ----------
         const tpForm = adminModalBody.querySelector('form[action="/admin/set_targets"]');
         if (tpForm) {
             tpForm.addEventListener('submit', async (e) => {
@@ -295,10 +289,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const resp = await fetch(tpForm.action, { method: 'POST', body: formData });
                     if (resp.redirected) {
+                        //showFlash('TP/SL updated successfully', 'success');
                         adminModal.hide();
                         window.location.reload();
                     } else {
                         const text = await resp.text();
+                        //showFlash('Failed to update TP/SL', 'danger');
                         console.log(text);
                     }
                 } catch (err) {
@@ -308,6 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        // ---------- Upload Portfolio Form ----------
         const uploadForm = adminModalBody.querySelector('form[action="/admin/upload"]');
         if (uploadForm) {
             uploadForm.addEventListener('submit', async (e) => {
@@ -320,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (resp.redirected) {
                         showFlash('Portfolio uploaded successfully', 'success');
                         adminModal.hide();
-                        window.location.reload();
+                        window.location.reload(); // Refresh dashboard after upload
                     } else {
                         const text = await resp.text();
                         showFlash('Failed to upload portfolio', 'danger');
@@ -334,6 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ---------- Delete Email Helper ----------
     function attachDeleteEmail(btn, input) {
         const flashContainer = document.getElementById('flashContainer');
         btn.addEventListener('click', async () => {
