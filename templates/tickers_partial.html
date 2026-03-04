@@ -48,4 +48,28 @@
         </div>
     </div>
 
+    <!-- FTSE -->
+    <div class="index-group mb-3">
+        <h6 class="index-title">FTSE100</h6>
+        <div class="ticker-grid">
+            {% for t in tickers if t.index == "FTSE" %}
+            <div class="ticker-box 
+                {% if t.pct <= -10 %} blink
+                {% elif t.pct > 0 %} up
+                {% elif t.pct < 0 %} down
+                {% endif %}">
+                <div class="ticker-symbol">{{ t.ticker }}</div>
+                <div class="ticker-price">${{ t.price or '–' }}</div>
+                <!--div class="ticker-pct">{{ "+" if t.pct>0 else ""}}{{ t.pct or '' }}%</div>-->
+                <span class="ticker-pct 
+                    {% if t.pct is not none and t.pct <= -10 %}blink
+                    {% elif t.pct is not none and t.pct < 0 %}neg
+                    {% else %}pos{% endif %}">
+                    {{ "+" if t.pct and t.pct > 0 else "" }}{{ t.pct or '–' }}%
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
 </div>
