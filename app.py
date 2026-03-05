@@ -49,26 +49,57 @@ if os.environ.get("RENDER"):
 # Helper function to get live prices
 # ----------------------------
 def get_live_prices(tickers):
+    """
+    Fetch live prices for a list of tickers using yfinance.
+    Returns a dict: { ticker: {"price": float, "pct": float} }
+
+    - Drops any NaN rows (e.g., US tickers before market open)
+    - Safely handles tickers with less than 2 valid rows
+    - pct = percentage change from previous trading day
+    """
     data = yf.download(
         tickers,
-        period="2d",  # later version to be tested with "5d"
+        period="5d",  # last 5 days to calculate pct safely
         interval="1d",
         group_by="ticker",
         auto_adjust=True,
         progress=False
     )
+
     live_data = {}
+
     for t in tickers:
         try:
+            # Handle multi-index columns (one dataframe per ticker) or single dataframe
             df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
-            last = df["Close"].iloc[-1]
-            prev = df["Close"].iloc[-2]
-            pct = (last / prev - 1) * 100
-            live_data[t] = {"price": round(last, 2), "pct": round(pct, 2)}
-        except Exception:
-            live_data[t] = {"price": None, "pct": None}
-    return live_data
 
+            # Keep only valid Close prices
+            close = df["Close"].dropna()
+
+            if len(close) == 0:
+                # No data available
+                live_data[t] = {"price": None, "pct": None}
+                continue
+            elif len(close) == 1:
+                # Only 1 row -> pct cannot be calculated
+                last = close.iloc[-1]
+                pct = 0
+            else:
+                # Normal case: at least 2 valid rows
+                last = close.iloc[-1]
+                prev = close.iloc[-2]
+                pct = (last / prev - 1) * 100 if prev != 0 else 0
+
+            live_data[t] = {
+                "price": round(last, 2),
+                "pct": round(pct, 2)
+            }
+
+        except Exception as e:
+            print(f"Error fetching {t}: {e}")
+            live_data[t] = {"price": None, "pct": None}
+
+    return live_data
 
 # ----------------------------
 # Send Emails When TP/SL hit
