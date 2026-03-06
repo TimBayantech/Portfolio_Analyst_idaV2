@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Mayfair Capital - Portfolio Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
@@ -13,16 +14,16 @@
     <!-- Left: Title & Portfolio -->
     <div class="d-flex flex-column">
         <h1 class="dashboard-title m-0">Mayfair Capital - Portfolio Dashboard</h1>
-        <!-- Portfolio Metric -->
+
         <div class="portfolio-metric">
             <strong>Portfolio:</strong>
 
             <span id="portfolio-pct"
-                class="portfolio-pct 
-                {% if portfolio_pct is not none and portfolio_pct > 0 %} 
-                    pos 
-                {% elif portfolio_pct is not none and portfolio_pct < 0 %} 
-                    neg 
+                class="portfolio-pct
+                {% if portfolio_pct is not none and portfolio_pct > 0 %}
+                    pos
+                {% elif portfolio_pct is not none and portfolio_pct < 0 %}
+                    neg
                 {% endif %}">
                 {% if portfolio_pct is not none %}
                     {{ "+" if portfolio_pct > 0 else "" }}{{ portfolio_pct }}%
@@ -58,7 +59,7 @@
 <div class="container-fluid p-4">
     <div class="row g-3">
 
-        <!-- LEFT PANEL: Chart + TP/SL -->
+        <!-- LEFT PANEL -->
         <div class="col-lg-8 col-12">
 
             <div class="card shadow-sm p-3 mb-2">
@@ -67,14 +68,11 @@
                         <h5>No trading data available yet</h5>
                         <p class="small">Waiting for first market close of the month.</p>
                     </div>
-
                 {% elif chart_html %}
                     {{ chart_html | safe }}
-
                 {% endif %}
             </div>
 
-            <!-- ✅ Portfolio Targets (centered to chart width) -->
             {% if portfolio_settings %}
             <div class="d-flex justify-content-center mt-2">
                 <div class="portfolio-targets mt-2 d-flex justify-content-center gap-2 flex-wrap">
@@ -107,7 +105,7 @@
                         {% endif %}">
                         TP3: {{ portfolio_settings.tp3 }}%
                     </span>
-                    <!-- SL -->
+
                     <span class="badge
                         {% if portfolio_settings.sl_hit %}
                             bg-danger text-white fw-bold blink
@@ -124,9 +122,37 @@
                 </div>
             {% endif %}
 
-        </div> <!-- ✅ END LEFT COL -->
+            <!-- ===================== LIVE MARKET TV ===================== -->
+            <div class="card shadow-sm mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span class="fw-semibold">📺 Live Market TV</span>
+                    <button class="btn btn-sm btn-outline-primary" id="toggleTvBtn" type="button">
+                        Load TV
+                    </button>
+                </div>
+                <div class="card-body p-2">
+                    <div id="tvPlaceholder" class="text-center text-muted py-4">
+                        Click <strong>Load TV</strong> to open the live stream.
+                    </div>
 
-        <!-- RIGHT PANEL: Tickers -->
+                    <div id="tvContainer" class="ratio ratio-16x9 d-none">
+                        <iframe
+                            id="marketTvFrame"
+                            data-src="https://www.youtube.com/embed/iEpJwprxDdk"
+                            title="Live Market News"
+                            frameborder="0"
+                            loading="lazy"
+                            referrerpolicy="strict-origin-when-cross-origin"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowfullscreen>
+                        </iframe>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT PANEL -->
         <div class="col-lg-4 col-12">
             <div class="ticker-panel">
                 {% include 'tickers_partial.html' %}
@@ -151,27 +177,51 @@
   </div>
 </div>
 
-<!-- ++++++ADMIN PANEL MODAL++++++++ -->
+<!-- ===================== ADMIN PANEL MODAL ===================== -->
 <div class="modal fade" id="adminModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
         <div class="modal-body" id="adminModalBody">
-            <!-- Admin Panel content will be injected here by Ajax-->
-            
+            <!-- Admin Panel content will be injected here by Ajax -->
         </div>
     </div>
   </div>
 </div>
 
-
-
-<!-- ===================== JS TO AUTO-REFRESH TICKERS ===================== -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
 
-    // ===================== Tickers Refresh =====================
+    // ===================== Tickers Refresh Only =====================
     setInterval(refreshTickers, 60000);
-    setInterval(() => window.location.reload(), 600000);
+
+    // ===================== TV Toggle =====================
+    const toggleTvBtn = document.getElementById('toggleTvBtn');
+    const tvContainer = document.getElementById('tvContainer');
+    const tvPlaceholder = document.getElementById('tvPlaceholder');
+    const marketTvFrame = document.getElementById('marketTvFrame');
+    let tvLoaded = false;
+
+    if (toggleTvBtn) {
+        toggleTvBtn.addEventListener('click', () => {
+            if (!tvLoaded) {
+                marketTvFrame.src = marketTvFrame.dataset.src;
+                tvContainer.classList.remove('d-none');
+                tvPlaceholder.classList.add('d-none');
+                toggleTvBtn.textContent = 'Hide TV';
+                tvLoaded = true;
+            } else {
+                if (tvContainer.classList.contains('d-none')) {
+                    tvContainer.classList.remove('d-none');
+                    tvPlaceholder.classList.add('d-none');
+                    toggleTvBtn.textContent = 'Hide TV';
+                } else {
+                    tvContainer.classList.add('d-none');
+                    tvPlaceholder.classList.remove('d-none');
+                    toggleTvBtn.textContent = 'Show TV';
+                }
+            }
+        });
+    }
 
     // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
@@ -185,20 +235,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const resp = await fetch('/admin?modal=1');
                 const html = await resp.text();
 
-                // Inject content
                 adminModalBody.innerHTML = html;
 
-                // Create Bootstrap modal instance
                 adminModal = new bootstrap.Modal(adminModalEl, {
                     backdrop: true,
                     keyboard: true
                 });
                 adminModal.show();
 
-                // Attach AJAX handlers
                 initAdminModalJS();
 
-                // Ensure no leftover backdrops
                 adminModalEl.addEventListener('hidden.bs.modal', () => {
                     document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
                 });
@@ -209,7 +255,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ===================== Tickers Refresh Function =====================
     async function refreshTickers() {
         try {
             const resp = await fetch('/tickers-refresh');
@@ -221,14 +266,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ===================== Admin Panel JS =====================
     function initAdminModalJS() {
         const emailForm = document.getElementById('emailForm');
         const flashContainer = document.getElementById('flashContainer');
 
         if (!emailForm || !flashContainer) return;
 
-        // Helper to show flash
         function showFlash(msg, category='info') {
             flashContainer.innerHTML = `
                 <div class="alert alert-${category} alert-sm mt-2">
@@ -237,7 +280,6 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
 
-        // ---------- Add Emails ----------
         emailForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             flashContainer.innerHTML = "";
@@ -252,7 +294,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await resp.json();
                 showFlash(data.flash, data.category);
 
-                // Attach delete buttons for new emails
                 const inputs = emailForm.querySelectorAll('input[type="email"]');
                 inputs.forEach(input => {
                     if (input.value && !input.nextElementSibling) {
@@ -271,14 +312,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // ---------- Attach delete buttons ----------
         const deleteButtons = emailForm.querySelectorAll('.delete-email-btn');
         deleteButtons.forEach(btn => {
             const input = btn.previousElementSibling;
             attachDeleteEmail(btn, input);
         });
 
-        // ---------- TP/SL Form ----------
         const tpForm = adminModalBody.querySelector('form[action="/admin/set_targets"]');
         if (tpForm) {
             tpForm.addEventListener('submit', async (e) => {
@@ -289,12 +328,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const resp = await fetch(tpForm.action, { method: 'POST', body: formData });
                     if (resp.redirected) {
-                        //showFlash('TP/SL updated successfully', 'success');
                         adminModal.hide();
                         window.location.reload();
                     } else {
                         const text = await resp.text();
-                        //showFlash('Failed to update TP/SL', 'danger');
                         console.log(text);
                     }
                 } catch (err) {
@@ -304,7 +341,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // ---------- Upload Portfolio Form ----------
         const uploadForm = adminModalBody.querySelector('form[action="/admin/upload"]');
         if (uploadForm) {
             uploadForm.addEventListener('submit', async (e) => {
@@ -317,7 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (resp.redirected) {
                         showFlash('Portfolio uploaded successfully', 'success');
                         adminModal.hide();
-                        window.location.reload(); // Refresh dashboard after upload
+                        window.location.reload();
                     } else {
                         const text = await resp.text();
                         showFlash('Failed to upload portfolio', 'danger');
@@ -331,7 +367,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ---------- Delete Email Helper ----------
     function attachDeleteEmail(btn, input) {
         const flashContainer = document.getElementById('flashContainer');
         btn.addEventListener('click', async () => {
@@ -362,6 +397,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
