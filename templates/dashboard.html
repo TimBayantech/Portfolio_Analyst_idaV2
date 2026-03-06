@@ -122,32 +122,66 @@
                 </div>
             {% endif %}
 
-            <!-- ===================== LIVE MARKET TV ===================== -->
-            <div class="card shadow-sm mt-3">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span class="fw-semibold">📺 Live Market TV</span>
-                    <button class="btn btn-sm btn-outline-primary" id="toggleTvBtn" type="button">
-                        Load TV
-                    </button>
-                </div>
-                <div class="card-body p-2">
-                    <div id="tvPlaceholder" class="text-center text-muted py-4">
-                        Click <strong>Load TV</strong> to open the live stream.
-                    </div>
+            <!-- ===================== TV + NEWS ROW ===================== -->
+            <div class="row g-3 mt-1">
 
-                    <div id="tvContainer" class="ratio ratio-16x9 d-none">
-                        <iframe
-                            id="marketTvFrame"
-                            data-src="https://www.youtube.com/embed/iEpJwprxDdk"
-                            title="Live Market News"
-                            frameborder="0"
-                            loading="lazy"
-                            referrerpolicy="strict-origin-when-cross-origin"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            allowfullscreen>
-                        </iframe>
+                <!-- LIVE MARKET TV -->
+                <div class="col-lg-6 col-12">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span class="fw-semibold">📺 Live Market TV</span>
+                            <button class="btn btn-sm btn-outline-primary" id="toggleTvBtn" type="button">
+                                Load TV
+                            </button>
+                        </div>
+                        <div class="card-body p-2">
+                            <div id="tvPlaceholder" class="text-center text-muted py-4">
+                                Click <strong>Load TV</strong> to open the live stream.
+                            </div>
+
+                            <div id="tvContainer" class="ratio ratio-16x9 d-none">
+                                <iframe
+                                    id="marketTvFrame"
+                                    data-src="https://www.youtube.com/embed/iEpJwprxDdk"
+                                    title="Live Market News"
+                                    frameborder="0"
+                                    loading="lazy"
+                                    referrerpolicy="strict-origin-when-cross-origin"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowfullscreen>
+                                </iframe>
+                            </div>
+                        </div>
                     </div>
                 </div>
+
+                <!-- MARKET NEWS -->
+                <div class="col-lg-6 col-12">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header fw-semibold">
+                            📰 Market News
+                        </div>
+                        <div class="card-body p-2">
+                            <div class="tradingview-widget-container">
+                                <div id="tradingview-news"></div>
+                                <script type="text/javascript"
+                                        src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js"
+                                        async>
+                                {
+                                  "feedMode": "market",
+                                  "colorTheme": "light",
+                                  "isTransparent": false,
+                                  "displayMode": "regular",
+                                  "width": "100%",
+                                  "height": 400,
+                                  "locale": "en"
+                                }
+                                </script>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
         </div>
