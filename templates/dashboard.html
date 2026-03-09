@@ -18,11 +18,11 @@
             <strong>Portfolio:</strong>
 
             <span id="portfolio-pct"
-                class="portfolio-pct 
-                {% if portfolio_pct is not none and portfolio_pct > 0 %} 
-                    pos 
-                {% elif portfolio_pct is not none and portfolio_pct < 0 %} 
-                    neg 
+                class="portfolio-pct
+                {% if portfolio_pct is not none and portfolio_pct > 0 %}
+                    pos
+                {% elif portfolio_pct is not none and portfolio_pct < 0 %}
+                    neg
                 {% endif %}">
                 {% if portfolio_pct is not none %}
                     {{ "+" if portfolio_pct > 0 else "" }}{{ portfolio_pct }}%
@@ -124,6 +124,34 @@
                 </div>
             {% endif %}
 
+            <!-- ===================== LIVE MARKET TV ===================== -->
+            <div class="card shadow-sm mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span class="fw-semibold">📺 Live Market TV</span>
+                    <button class="btn btn-sm btn-outline-primary" id="toggleTvBtn" type="button">
+                        Load TV
+                    </button>
+                </div>
+                <div class="card-body p-2">
+                    <div id="tvPlaceholder" class="text-center text-muted py-4">
+                        Click <strong>Load TV</strong> to open the live stream.
+                    </div>
+
+                    <div id="tvContainer" class="ratio ratio-16x9 d-none">
+                        <iframe
+                            id="marketTvFrame"
+                            data-src="https://www.youtube.com/embed/iEpJwprxDdk"
+                            title="Live Market News"
+                            frameborder="0"
+                            loading="lazy"
+                            referrerpolicy="strict-origin-when-cross-origin"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowfullscreen>
+                        </iframe>
+                    </div>
+                </div>
+            </div>
+
         </div> <!-- ✅ END LEFT COL -->
 
         <!-- RIGHT PANEL: Tickers -->
@@ -157,13 +185,11 @@
     <div class="modal-content">
         <div class="modal-body" id="adminModalBody">
             <!-- Admin Panel content will be injected here by Ajax-->
-            
+
         </div>
     </div>
   </div>
 </div>
-
-
 
 <!-- ===================== JS TO AUTO-REFRESH TICKERS ===================== -->
 <script>
@@ -201,7 +227,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
 
     // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
