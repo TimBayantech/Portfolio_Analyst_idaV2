@@ -173,6 +173,36 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(refreshTickers, 300000);
     setInterval(() => window.location.reload(), 600000);
 
+    // ===================== TV Toggle =====================
+    const toggleTvBtn = document.getElementById('toggleTvBtn');
+    const tvContainer = document.getElementById('tvContainer');
+    const tvPlaceholder = document.getElementById('tvPlaceholder');
+    const marketTvFrame = document.getElementById('marketTvFrame');
+    let tvLoaded = false;
+
+    if (toggleTvBtn) {
+        toggleTvBtn.addEventListener('click', () => {
+            if (!tvLoaded) {
+                marketTvFrame.src = marketTvFrame.dataset.src;
+                tvContainer.classList.remove('d-none');
+                tvPlaceholder.classList.add('d-none');
+                toggleTvBtn.textContent = 'Hide TV';
+                tvLoaded = true;
+            } else {
+                if (tvContainer.classList.contains('d-none')) {
+                    tvContainer.classList.remove('d-none');
+                    tvPlaceholder.classList.add('d-none');
+                    toggleTvBtn.textContent = 'Hide TV';
+                } else {
+                    tvContainer.classList.add('d-none');
+                    tvPlaceholder.classList.remove('d-none');
+                    toggleTvBtn.textContent = 'Show TV';
+                }
+            }
+        });
+    }
+
+
     // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
     const adminModalEl = document.getElementById('adminModal');
