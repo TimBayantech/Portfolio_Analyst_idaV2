@@ -1,0 +1,36 @@
+<div class="ticker-panel">
+
+{% for group in tickers|groupby("index") %}
+<div class="index-group mb-3">
+    <h6 class="index-title">{{ group.grouper }}</h6>
+    <div class="ticker-grid">
+        {% for t in group.list %}
+        {# Determine CSS class based on status #}
+        {% set box_class = 'ticker-box' %}
+        {% if t.sold %}
+            {% set box_class = box_class + ' sold' %}
+        {% elif t.pct is not none and t.pct <= -10 %}
+            {% set box_class = box_class + ' blink' %}
+        {% elif t.pct is not none and t.pct > 0 %}
+            {% set box_class = box_class + ' up' %}
+        {% elif t.pct is not none and t.pct < 0 %}
+            {% set box_class = box_class + ' down' %}
+        {% endif %}
+
+        <div class="{{ box_class }}">
+            <div class="ticker-symbol">{{ t.ticker }}</div>
+            <div class="ticker-price">{{ t.price or '–' }}</div>
+            <span class="ticker-pct 
+                {% if t.pct is not none and t.pct <= -10 %}blink
+                {% elif t.pct is not none and t.pct < 0 %}neg
+                {% else %}pos{% endif %}">
+                {{ "+" if t.pct and t.pct > 0 else "" }}
+                {{ "%.2f"|format(t.pct) if t.pct is not none else "–" }}%
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+</div>
