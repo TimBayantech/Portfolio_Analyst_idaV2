@@ -560,7 +560,7 @@ def tickers_refresh():
     if not portfolio:
         return ""
     
-    ticker_records = PortfolioTicker.query.filter_buy(portfolio_id=portfolio.id).all()
+    ticker_records = PortfolioTicker.query.filter_by(portfolio_id=portfolio.id).all()
     if not ticker_records:
         return ""
 
