@@ -13,6 +13,7 @@
     <!-- Left: Title & Portfolio -->
     <div class="d-flex flex-column">
         <h1 class="dashboard-title m-0">Mayfair Capital - Portfolio Dashboard</h1>
+        <!-- Portfolio Metric -->
         <div class="portfolio-metric">
             <strong>Portfolio:</strong>
 
@@ -53,27 +54,33 @@
     </div>
 </div>
 
+
 <!-- ===================== MAIN CONTENT ===================== -->
 <div class="container-fluid p-4">
-    <div class="dashboard-grid" style="display:grid; grid-template-columns:minmax(0, 2fr) minmax(320px, 1fr); gap:1rem; align-items:start;">
+    <div class="row g-3">
 
-        <!-- LEFT PANEL: Chart + Targets + TV -->
-        <div class="dashboard-main" style="min-width:0; display:flex; flex-direction:column; gap:1rem;">
+        <!-- LEFT PANEL: Chart + TP/SL -->
+        <div class="col-lg-8 col-12">
 
-            <div class="card shadow-sm p-3 mb-0">
+            <div class="card shadow-sm p-3 mb-2 pb-4">
                 {% if message %}
                     <div class="text-muted text-center py-5">
                         <h5>No trading data available yet</h5>
                         <p class="small">Waiting for first market close of the month.</p>
                     </div>
+
                 {% elif chart_html %}
                     {{ chart_html | safe }}
+
                 {% endif %}
             </div>
+            
 
+            <!-- ✅ Portfolio Targets (centered to chart width) -->
             {% if portfolio_settings %}
-            <div class="card shadow-sm p-3 mb-0">
-                <div class="portfolio-targets d-flex justify-content-center gap-2 flex-wrap">
+            <!--div class="d-flex justify-content-center mt-2"-->
+            <div class="position-relative mt-2">
+                <div class="d-flex justify-content-center gap-2 flex-wrap">
                     <span id="tp1-badge"
                         class="badge
                         {% if portfolio_settings.tp1_hit %}
@@ -103,7 +110,7 @@
                         {% endif %}">
                         TP3: {{ portfolio_settings.tp3 }}%
                     </span>
-
+                    <!-- SL -->
                     <span class="badge
                         {% if portfolio_settings.sl_hit %}
                             bg-danger text-white fw-bold blink
@@ -113,6 +120,7 @@
                         SL: {{ portfolio_settings.stop_loss }}%
                     </span>
                 </div>
+                  
             </div>
             {% else %}
                 <div class="text-muted small text-center mt-2">
@@ -120,51 +128,38 @@
                 </div>
             {% endif %}
 
-            <div class="d-flex justify-content-end mb-0">
-                <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#bloombergTV" aria-expanded="false" aria-controls="bloombergTV">
-                    {{ 'Hide' if show_tv else 'Show' }} Bloomberg TV
-                </button>
-            </div>
-
-            <div class="collapse {% if show_tv %}show{% endif %}" id="bloombergTV">
-                <div class="card shadow-sm p-3 mb-0">
-                    <h6 class="mb-3">Bloomberg TV</h6>
-                    <div class="video-frame" style="position:relative; width:100%; aspect-ratio:16 / 9; overflow:hidden; border-radius:12px; background:#000;">
-                        <iframe 
-                            src="https://www.youtube.com/embed/iEpJwprxDdk"
-                            title="Bloomberg TV"
-                            style="position:absolute; inset:0; width:100%; height:100%; border:0;"
+            <!-- Bloomberg TV Card (collapsible) -->
+            <!-- Right: Button to toggle Bloomberg TV (YouTube) -->
+            <div id="bloombergTVContainer" class="mt-3">
+                <!-- Toggle Button aligned to right -->
+                <div class="d-flex justify-content-end mb-2">
+                    <button id="toggleBloombergBtn" class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#bloombergTV" aria-expanded="false" aria-controls="bloombergTV">
+                        Show Bloomberg TV
+                    </button>
+                </div>    
+                <div class="collapse" id="bloombergTV">
+                    <div class="card shadow-sm mb-2" style="overflow: hidden; position: relative; width: 100%; height: 40vh; max-height: 500px;">
+                        <h6 class="mb-2 p-2">Bloomberg TV</h6>
+                        <iframe
+                            src="https://www.youtube.com/embed/iEpJwprxDdk?autoplay=0&modestbranding=1&mute=0"
+                            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; object-fit: cover;"
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                             allowfullscreen>
                         </iframe>
                     </div>
-                </div>
+                </div> 
+            </div>          
+        </div> <!-- ✅ END LEFT COL -->
+
+        <!-- RIGHT PANEL: Tickers -->
+        <div class="col-lg-4 col-12">
+            <div class="ticker-panel">
+                {% include 'tickers_partial.html' %}
             </div>
         </div>
 
-        <!-- RIGHT PANEL: Tickers -->
-        <aside class="dashboard-side" style="min-width:0;">
-            <div class="card shadow-sm p-3 h-100">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="mb-0">Live Tickers</h6>
-                    <span class="text-muted small">Auto refresh</span>
-                </div>
-                <div class="ticker-panel">
-                    {% include 'tickers_partial.html' %}
-                </div>
-            </div>
-        </aside>
-
     </div>
 </div>
-
-<style>
-@media (max-width: 991.98px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr !important;
-    }
-}
-</style>
 
 <!-- ===================== LOGIN MODAL ===================== -->
 <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
@@ -187,18 +182,23 @@
     <div class="modal-content">
         <div class="modal-body" id="adminModalBody">
             <!-- Admin Panel content will be injected here by Ajax-->
+            
         </div>
     </div>
   </div>
 </div>
 
+
+
 <!-- ===================== JS TO AUTO-REFRESH TICKERS ===================== -->
 <script>
 document.addEventListener('DOMContentLoaded', () => {
 
+    // ===================== Tickers Refresh =====================
     setInterval(refreshTickers, 60000);
     setInterval(() => window.location.reload(), 600000);
 
+    // ===================== Admin Modal =====================
     const openAdminBtn = document.getElementById('openAdminBtn');
     const adminModalEl = document.getElementById('adminModal');
     const adminModalBody = document.getElementById('adminModalBody');
@@ -209,22 +209,32 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const resp = await fetch('/admin?modal=1');
                 const html = await resp.text();
+
+                // Inject content
                 adminModalBody.innerHTML = html;
+
+                // Create Bootstrap modal instance
                 adminModal = new bootstrap.Modal(adminModalEl, {
                     backdrop: true,
                     keyboard: true
                 });
                 adminModal.show();
+
+                // Attach AJAX handlers
                 initAdminModalJS();
+
+                // Ensure no leftover backdrops
                 adminModalEl.addEventListener('hidden.bs.modal', () => {
                     document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
                 });
+
             } catch (err) {
                 console.error("Failed to load admin panel:", err);
             }
         });
     }
 
+    // ===================== Tickers Refresh Function =====================
     async function refreshTickers() {
         try {
             const resp = await fetch('/tickers-refresh');
@@ -236,12 +246,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ===================== Admin Panel JS =====================
     function initAdminModalJS() {
         const emailForm = document.getElementById('emailForm');
         const flashContainer = document.getElementById('flashContainer');
 
         if (!emailForm || !flashContainer) return;
 
+        // Helper to show flash
         function showFlash(msg, category='info') {
             flashContainer.innerHTML = `
                 <div class="alert alert-${category} alert-sm mt-2">
@@ -250,10 +262,13 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
 
+        // ---------- Add Emails ----------
         emailForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             flashContainer.innerHTML = "";
+
             const formData = new FormData(emailForm);
+
             try {
                 const resp = await fetch(emailForm.action, {
                     method: 'POST',
@@ -261,6 +276,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 const data = await resp.json();
                 showFlash(data.flash, data.category);
+
+                // Attach delete buttons for new emails
                 const inputs = emailForm.querySelectorAll('input[type="email"]');
                 inputs.forEach(input => {
                     if (input.value && !input.nextElementSibling) {
@@ -272,31 +289,37 @@ document.addEventListener('DOMContentLoaded', () => {
                         attachDeleteEmail(btn, input);
                     }
                 });
+
             } catch (err) {
                 showFlash('Failed to save emails', 'danger');
                 console.error(err);
             }
         });
 
+        // ---------- Attach delete buttons ----------
         const deleteButtons = emailForm.querySelectorAll('.delete-email-btn');
         deleteButtons.forEach(btn => {
             const input = btn.previousElementSibling;
             attachDeleteEmail(btn, input);
         });
 
+        // ---------- TP/SL Form ----------
         const tpForm = adminModalBody.querySelector('form[action="/admin/set_targets"]');
         if (tpForm) {
             tpForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 flashContainer.innerHTML = "";
                 const formData = new FormData(tpForm);
+
                 try {
                     const resp = await fetch(tpForm.action, { method: 'POST', body: formData });
                     if (resp.redirected) {
+                        //showFlash('TP/SL updated successfully', 'success');
                         adminModal.hide();
                         window.location.reload();
                     } else {
                         const text = await resp.text();
+                        //showFlash('Failed to update TP/SL', 'danger');
                         console.log(text);
                     }
                 } catch (err) {
@@ -305,29 +328,107 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
+
+        // ---------- Upload Portfolio Form ----------
+        const uploadForm = adminModalBody.querySelector('form[action="/admin/upload"]');
+        if (uploadForm) {
+            uploadForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                flashContainer.innerHTML = "";
+                const formData = new FormData(uploadForm);
+
+                try {
+                    const resp = await fetch(uploadForm.action, { method: 'POST', body: formData });
+                    if (resp.redirected) {
+                        showFlash('Portfolio uploaded successfully', 'success');
+                        adminModal.hide();
+                        window.location.reload(); // Refresh dashboard after upload
+                    } else {
+                        const text = await resp.text();
+                        showFlash('Failed to upload portfolio', 'danger');
+                        console.log(text);
+                    }
+                } catch (err) {
+                    showFlash('Error uploading portfolio', 'danger');
+                    console.error(err);
+                }
+            });
+        }
     }
 
+    // ---------- Delete Email Helper ----------
     function attachDeleteEmail(btn, input) {
+        const flashContainer = document.getElementById('flashContainer');
         btn.addEventListener('click', async () => {
+            if (!confirm("Delete this email?")) return;
+
             const emailId = btn.dataset.id;
             if (!emailId) return;
+
             try {
                 const resp = await fetch(`/admin/delete_email/${emailId}`, { method: 'POST' });
                 const data = await resp.json();
-                if (resp.ok) {
-                    input.value = '';
-                    input.removeAttribute('readonly');
-                    btn.remove();
-                    const flashContainer = document.getElementById('flashContainer');
-                    if (flashContainer) {
-                        flashContainer.innerHTML = `<div class="alert alert-${data.category} alert-sm mt-2">${data.flash}</div>`;
-                    }
-                }
+                input.parentElement.remove();
+                flashContainer.innerHTML = `
+                    <div class="alert alert-${data.category} alert-sm mt-2">
+                        ${data.flash}
+                    </div>
+                `;
             } catch (err) {
-                console.error('Failed to delete email:', err);
+                flashContainer.innerHTML = `
+                    <div class="alert alert-danger alert-sm mt-2">
+                        Failed to delete email
+                    </div>
+                `;
+                console.error(err);
             }
         });
     }
+
+    // ---------- Bloomberg TV Toggle Button ----------
+    // Restore previous open/closed state
+    const collapseEl = document.getElementById('bloombergTV');
+    const toggleBtn = document.getElementById('toggleBloombergBtn');
+    const iframeEl = collapseEl.querySelector('iframe');
+    // store original src with autoplay=1&mute=1 so browser allows autoplay
+    const iframeSrc = "https://www.youtube.com/embed/iEpJwprxDdk?autoplay=1&modestbranding=1";
+
+
+    if (collapseEl && toggleBtn && iframeEl) {
+
+        // Helper function to play video with autoplay
+        function playVideo() {
+            iframeEl.src = baseSrc + "&autoplay=1";
+        }
+
+        // Restore video if it was previously open
+        const tvOpen = localStorage.getItem('bloombergTVOpen') === 'true';
+        if (tvOpen) {
+            collapseEl.classList.add('show');
+            toggleBtn.textContent = 'Close Bloomberg TV';
+            // Slight delay ensures collapse is ready before setting src
+            setTimeout(() => {
+                playVideo();
+            }, 100);
+        }
+
+        collapseEl.addEventListener('show.bs.collapse', () => {
+            toggleBtn.textContent = 'Close Bloomberg TV';
+            // Only autoplay on first user interaction
+            iframeEl.src = iframeSrc + "&autoplay=1";
+            localStorage.setItem('bloombergTVOpen', 'true');
+        });
+
+        collapseEl.addEventListener('hide.bs.collapse', () => {
+            toggleBtn.textContent = 'Show Bloomberg TV';
+            iframeEl.src = ''; // stop video
+            localStorage.setItem('bloombergTVOpen', 'false');
+        });
+    }
+
+    
+
+
 });
 </script>
 

@@ -59,3 +59,10 @@ class AlertEmail(db.Model):
 
     #def __repr__(self):
         #return f"<User {self.email}>"
+
+# ----- Ticker Alert State -----
+class AlertState(db.Model):
+    __tablename__ = "alert_state"
+
+    ticker = db.Column(db.String(10), primary_key=True)
+    last_alert_time = db.Column(db.DateTime, nullable=False)

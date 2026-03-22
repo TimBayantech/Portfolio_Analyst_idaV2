@@ -10,7 +10,7 @@ import os
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import IntegrityError
 import threading
-from models import db, User, PortfolioTicker, PortfolioSettings, AlertEmail, Portfolio
+from models import db, User, PortfolioTicker, PortfolioSettings, AlertEmail, Portfolio, AlertState
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from dotenv import load_dotenv
@@ -30,27 +30,28 @@ if database_url.startswith("postgres://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_pre_ping": True,
-    "pool_recycle": 280,
-    "pool_timeout": 30,
-    "max_overflow": 5,
-}
-
 # ✅ Bind SQLAlchemy to this app
 db.init_app(app)
 
 # ===============================
 # ✅ Cache Setup (AFTER dotenv)
 # ===============================
-from flask_caching import Cache
 
 cache_config = {
-    "CACHE_TYPE": "SimpleCache",
+    "CACHE_TYPE": "RedisCache",
+    "CACHE_REDIS_URL": os.environ["REDIS_URL"],
     "CACHE_DEFAULT_TIMEOUT": 300
 }
+
+print("REDIS_URL", os.environ.get("REDIS_URL"))
+
 cache = Cache(config=cache_config)
 cache.init_app(app)
+
+# ----- set ticker alarms --------
+ALERT_THRESHOLD = -10 # if this is changed, also make changes in teckers_partial.html
+RESET_THRESHOLD = -9
+COOLDOWN_MINUTES = 60
 
 # ✅ Create tables
 with app.app_context():
@@ -61,7 +62,8 @@ with app.app_context():
 # Helper function to get live prices
 # ----------------------------
 @cache.memoize(timeout=60)
-def get_live_prices(tickers):
+def get_live_prices(tickers_tuple):
+    tickers = list(tickers_tuple)
     """
     Fetch live prices for a list of tickers using yfinance.
     Returns a dict: { ticker: {"price": float, "pct": float} }
@@ -70,6 +72,8 @@ def get_live_prices(tickers):
     - Safely handles tickers with less than 2 valid rows
     - pct = percentage change from previous trading day
     """
+
+    
     data = yf.download(
         tickers,
         period="5d",  # last 5 days to calculate pct safely
@@ -236,22 +240,55 @@ def check_and_send_portfolio_alerts(settings, portfolio_pct):
 def check_ticker_drawdown_alerts(tickers_data):
 
     triggered = []
+    now = datetime.now()
 
     for t in tickers_data:
+        ticker = t.get("ticker")
         pct = t.get("pct")
+        sold = t.get("sold")
 
-        if pct is not None and pct <= -10: # change back to -10%
-            triggered.append({
-                "ticker": t.get("ticker"),
-                "pct": pct
-            })
+        # ❌ Skip invalid or sold
+        if pct is None or sold:
+            continue
+
+        alert = AlertState.query.get(ticker)
+
+        # =========================
+        # 🚨 ALERT CONDITION
+        # =========================
+        if pct <= ALERT_THRESHOLD:
+
+            send_alert = False
+
+            if not alert:
+                send_alert = True
+            else:
+                if now - alert.last_alert_time > timedelta(minutes=COOLDOWN_MINUTES):
+                    send_alert = True
+
+            if send_alert:
+                triggered.append(f"{ticker} ({pct:.2f}%)")
+
+                if not alert:
+                    alert = AlertState(ticker=ticker)
+
+                alert.last_alert_time = now
+                db.session.add(alert)
+
+        # =========================
+        # 🔄 RESET (HYSTERESIS)
+        # =========================
+        elif pct >= RESET_THRESHOLD:
+            if alert:
+                db.session.delete(alert)
+
+    db.session.commit()
 
     if not triggered:
         return []
 
     subject = "🚨 Ticker Alert: -10% Drawdown"
-    body = "The following tickers have dropped below -10% today:\n\n"
-    body += "\n".join([f"{t['ticker']} ({t['pct']:.2f}%)" for t in triggered])
+    body = "The following tickers are below -10%:\n\n" + "\n".join(triggered)
 
     send_portfolio_alert_async(subject, body)
 
@@ -299,7 +336,7 @@ def get_dashboard_data(current_month):
     first_portfolio_day = min((t.date_bought for t in db_tickers if t.date_bought),
                               default=portfolio.start_date)
 
-    live_prices = get_live_prices(tickers)
+    live_prices = get_live_prices(tuple(sorted(tickers)))
 
     for t in db_tickers:
         lp = live_prices.get(t.ticker, {})
@@ -359,6 +396,29 @@ def get_dashboard_data(current_month):
             prices.loc[buy_day, t.ticker] = 1
 
         prices = prices.reindex(all_days)
+
+        # -----------------------------
+        # SANITY CHECK: Active tickers
+        # -----------------------------
+        print("===== SANITY CHECK =====")
+
+        for day in all_days[:17]:  # limit to first 10 days (IMPORTANT)
+            active_tickers = prices.loc[day].notna()
+            active_count = active_tickers.sum()
+            tickers_active_list = prices.columns[active_tickers].tolist()
+
+            print(f"{day.date()} | Active tickers: {tickers_active_list}")
+            print(f"Count: {active_count}")
+            print(f"Prices: {prices.loc[day].dropna().round(2).to_dict()}")
+            print("-----")
+
+        print("=========================")
+
+        for t in db_tickers:
+            if t.date_sold:
+                print(f"{t.ticker} sold on {t.date_sold}")
+
+        print("=========================")
 
         active_counts = prices.notna().sum(axis=1).replace(0, None)
         portfolio_index = prices.sum(axis=1) / active_counts
@@ -442,7 +502,7 @@ def get_dashboard_data(current_month):
         padding = 0.02
         fig.update_layout(yaxis=dict(range=[ymin - padding, ymax + padding]))    
             
-    chart_html = pio.to_html(fig, full_html=False, include_plotlyjs="cdn")
+    chart_html = pio.to_html(fig, full_html=True)
 
     return {
         "chart_html": chart_html,
@@ -471,6 +531,8 @@ def dashboard():
     # ✅ RUN ALERTS OUTSIDE CACHE
     check_ticker_drawdown_alerts(data["tickers"])
     check_and_send_portfolio_alerts(data["settings"], data["portfolio_pct"])
+    
+    
 
     return render_template(
         "dashboard.html",
@@ -484,23 +546,30 @@ def dashboard():
 
 @app.route("/tickers-refresh")
 def tickers_refresh():
+    
+
+    """ticker_records = PortfolioTicker.query.all()
+
+    if not ticker_records:
+        return """""
+    
     today = pd.Timestamp.today().normalize()
     current_month = today.strftime("%Y-%m")
 
-    portfolio = Portfolio.query.filter_by(month=current_month).first()
-
+    portfolio = portfolio.query.filter_buy(month=current_month).first()
     if not portfolio:
-        return render_template("tickers_partial.html", tickers=[], last_updated=None)
-
-    ticker_records = PortfolioTicker.query.filter_by(portfolio_id=portfolio.id).all()
-
+        return ""
+    
+    ticker_records = PortfolioTicker.query.filter_buy(portfolio_id=portfolio.id).all()
     if not ticker_records:
-        return render_template("tickers_partial.html", tickers=[], last_updated=None)
+        return ""
+
 
     tickers = [t.ticker for t in ticker_records]
     live_prices = get_live_prices(tickers)
 
     tickers_data = []
+    current_prices = []
 
     for t in ticker_records:
         lp = live_prices.get(t.ticker, {})
@@ -510,9 +579,14 @@ def tickers_refresh():
             "index": t.index,
             "price": lp.get("price"),
             "pct": lp.get("pct"),
-            "sold": bool(t.date_sold)
+            "sold": bool(t.date_sold)  # True if sold
+
         })
 
+        if lp.get("price") is not None:
+            current_prices.append(lp["price"])
+
+    # Equal-weight calculation (simple live)
     last_updated = datetime.now().strftime("%H:%M")
 
     return render_template(
@@ -520,6 +594,7 @@ def tickers_refresh():
         tickers=tickers_data,
         last_updated=last_updated,
     )
+
 
 
 # -------------------------------
@@ -746,6 +821,7 @@ def admin_delete_email(email_id):
         "deleted_id": email_id
     })
 
+
 # -------------------------------
 # LOGIN (admin)
 # -------------------------------
@@ -804,4 +880,4 @@ def admin_test_email():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)

@@ -21,9 +21,15 @@
             <div class="ticker-symbol">{{ t.ticker }}</div>
             <div class="ticker-price">{{ t.price or '–' }}</div>
             <span class="ticker-pct 
-                {% if t.pct is not none and t.pct <= -10 %}blink
-                {% elif t.pct is not none and t.pct < 0 %}neg
-                {% else %}pos{% endif %}">
+                {% if t.sold %}
+                    text-muted
+                {% elif t.pct is not none and t.pct <= -10 %}
+                    blink
+                {% elif t.pct is not none and t.pct < 0 %}
+                    neg
+                {% else %}
+                    pos
+                {% endif %}">
                 {{ "+" if t.pct and t.pct > 0 else "" }}
                 {{ "%.2f"|format(t.pct) if t.pct is not none else "–" }}%
             </span>
