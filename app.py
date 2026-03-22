@@ -556,7 +556,7 @@ def tickers_refresh():
     today = pd.Timestamp.today().normalize()
     current_month = today.strftime("%Y-%m")
 
-    portfolio = portfolio.query.filter_buy(month=current_month).first()
+    portfolio = Portfolio.query.filter_buy(month=current_month).first()
     if not portfolio:
         return ""
     
