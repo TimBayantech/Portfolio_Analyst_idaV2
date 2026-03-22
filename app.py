@@ -90,12 +90,6 @@ def get_live_prices(tickers_tuple):
             # Handle multi-index columns (one dataframe per ticker) or single dataframe
             df = data[t] if isinstance(data.columns, pd.MultiIndex) else data
 
-            # ================= DEBUGGING =================
-            #print("Ticker:", t)
-            #print(df["Close"].tail())
-            #print("------------------")
-            # ============================================
-
             # Keep only valid Close prices
             close = df["Close"].dropna()
 
@@ -185,19 +179,6 @@ def check_and_send_portfolio_alerts(settings, portfolio_pct):
     # 🔒 CRITICAL FIX
     if portfolio_pct is None:
         return
-    
-    #debugging
-    print("------ ALERT DEBUG ------")
-    print("Portfolio:", portfolio_pct, type(portfolio_pct))
-    print("TP1:", settings.tp1, type(settings.tp1))
-    print("TP2:", settings.tp2)
-    print("TP3:", settings.tp3)
-    print("SL:", settings.stop_loss)
-    print("TP1 HIT:", settings.tp1_hit)
-    print("TP2 HIT:", settings.tp2_hit)
-    print("TP3 HIT:", settings.tp3_hit)
-    print("SL HIT", settings.sl_hit)
-    print("-------------------------")
 
     # TP1
     if settings.tp1 and not settings.tp1_hit and portfolio_pct >= settings.tp1:
@@ -397,29 +378,6 @@ def get_dashboard_data(current_month):
 
         prices = prices.reindex(all_days)
 
-        # -----------------------------
-        # SANITY CHECK: Active tickers
-        # -----------------------------
-        print("===== SANITY CHECK =====")
-
-        for day in all_days[:17]:  # limit to first 10 days (IMPORTANT)
-            active_tickers = prices.loc[day].notna()
-            active_count = active_tickers.sum()
-            tickers_active_list = prices.columns[active_tickers].tolist()
-
-            print(f"{day.date()} | Active tickers: {tickers_active_list}")
-            print(f"Count: {active_count}")
-            print(f"Prices: {prices.loc[day].dropna().round(2).to_dict()}")
-            print("-----")
-
-        print("=========================")
-
-        for t in db_tickers:
-            if t.date_sold:
-                print(f"{t.ticker} sold on {t.date_sold}")
-
-        print("=========================")
-
         active_counts = prices.notna().sum(axis=1).replace(0, None)
         portfolio_index = prices.sum(axis=1) / active_counts
         portfolio_index = portfolio_index.ffill()
@@ -502,7 +460,7 @@ def get_dashboard_data(current_month):
         padding = 0.02
         fig.update_layout(yaxis=dict(range=[ymin - padding, ymax + padding]))    
             
-    chart_html = pio.to_html(fig, full_html=True)
+    chart_html = pio.to_html(fig, full_html=False)
 
     return {
         "chart_html": chart_html,
