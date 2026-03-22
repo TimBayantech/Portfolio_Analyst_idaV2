@@ -459,9 +459,8 @@ def get_dashboard_data(current_month):
         ymax = all_values.max()
         padding = 0.02
         fig.update_layout(yaxis=dict(range=[ymin - padding, ymax + padding]))    
-            
-    chart_html = pio.to_html(fig, full_html=False)
 
+    chart_html = pio.to_html(fig, full_html=False, include_plotlyjs=False)
     return {
         "chart_html": chart_html,
         "tickers": tickers_data,
